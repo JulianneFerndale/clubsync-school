@@ -1,0 +1,69 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Deploy: push to GitHub, then in Render: New + → Blueprint → pick this repo.
+# Secrets are marked `sync: false`, so Render will prompt you for their values
+# (they are never stored in the repo).
+services:
+  - type: web
+    name: clubsync
+    runtime: docker
+    plan: free
+    region: singapore            # closest Render region to PH + the Supabase (Tokyo) DB
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /up
+    autoDeploy: true
+    envVars:
+      # ── App ────────────────────────────────────────────────────────────────
+      - key: APP_NAME
+        value: ClubSync
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: APP_KEY
+        sync: false              # paste output of: php artisan key:generate --show
+      - key: APP_URL
+        sync: false              # set to your https://<service>.onrender.com URL after first deploy
+      - key: LOG_CHANNEL
+        value: stderr            # so logs appear in the Render dashboard
+
+      # ── Database (Supabase Postgres) ────────────────────────────────────────
+      - key: DB_CONNECTION
+        value: pgsql
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: "5432"
+      - key: DB_DATABASE
+        sync: false
+      - key: DB_USERNAME
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_SSLMODE
+        value: require
+      - key: DB_CONNECT_TIMEOUT
+        value: "5"
+
+      # ── Sessions / cache / queue (all backed by the Supabase DB) ─────────────
+      - key: SESSION_DRIVER
+        value: database
+      - key: CACHE_STORE
+        value: database
+      - key: QUEUE_CONNECTION
+        value: database
+      - key: FILESYSTEM_DISK
+        value: local
+
+      # ── Firebase (auth + realtime DB) ───────────────────────────────────────
+      - key: FIREBASE_API_KEY
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_DATABASE_URL
+        sync: false
+
+      # ── Gemini (AI announcement drafting) ───────────────────────────────────
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash

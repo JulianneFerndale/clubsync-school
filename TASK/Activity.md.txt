@@ -1,0 +1,19 @@
+1. Identify the software and tools you used in your capstone project.
+2. Decide how your system will be deployed or released to users.
+3. Discuss whether your system will be:
+Free to use
+Subscription-based
+Product-key activated
+One-Time Payment
+4. Create a simple plan  explaining:
+  How users can access your system
+
+
+If users need to pay 
+
+
+How you will protect your system from unauthorized use 
+
+
+The rules or policies users must follow
+5. Encode your output in Word document and create a PPT for the group presentation.

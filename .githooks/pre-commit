@@ -1,0 +1,69 @@
+#!/bin/sh
+#
+# Refuses any commit whose staged content contains a credential.
+#
+# ClubSync has leaked twice through .env.example: a live Gemini and Firebase
+# key, and a live Supabase DB_PASSWORD with its host and username. Real values
+# belong in .env, which is git-ignored; .env.example is a template and every
+# secret in it must stay empty.
+#
+# Enable in a fresh clone with:
+#     git config core.hooksPath .githooks
+#
+# Bypass for a genuine false positive:
+#     git commit --no-verify
+
+set -u
+
+# 1. Vendor-prefixed credentials, recognisable by their shape.
+#    Google keys come in two forms: the older AIzaSy... and the newer AQ....
+PATTERN='AIzaSy[0-9A-Za-z_-]{20,}|AQ\.[A-Za-z0-9_-]{20,}|BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY|ya29\.[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}'
+
+# 2. Credentials with no distinctive shape: a password, secret, token or key
+#    given a real value on an env-style assignment line. A vendor-prefix scan
+#    cannot see these -- that gap is how DB_PASSWORD reached a public repo.
+#    A template holds empty, null or obviously-fake values, so those pass.
+ENV_ASSIGN='^[A-Za-z0-9_]*(PASSWORD|SECRET|TOKEN|APP_KEY|API_KEY)='
+
+# Anchored to the whole "path:line:KEY=VALUE" that git grep prints. Anchoring
+# only at $ let a base64 APP_KEY through: its trailing '=' padding read as an
+# empty value.
+SAFE_VALUE='^.*:[0-9]+:[A-Za-z0-9_]*(PASSWORD|SECRET|TOKEN|APP_KEY|API_KEY)=(|null|NULL|true|false|base64:|your_[A-Za-z0-9_]*|YOUR_[A-Z0-9_]*|CHANGE_ME[A-Z0-9_]*|xxx+|\$\{[A-Za-z_]+\})$'
+
+hits=$(mktemp) || exit 1
+trap 'rm -f "$hits"' EXIT
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+
+# A real .env must never be committed, whatever is in it.
+printf '%s\n' "$staged" | grep -qx '\.env' && \
+    printf '%s\n' ".env:0:refusing to commit a real .env file" >> "$hits"
+
+# Scanned against the index, not the working copy: what is staged is what gets
+# committed, and the two can differ. git grep skips binary files itself and
+# prints path:line:text, so no blob is ever read into a shell variable.
+printf '%s\n' "$staged" | while IFS= read -r file; do
+    [ -n "$file" ] || continue
+
+    git grep --cached -nIE "$PATTERN" -- "$file" \
+        | cut -c1-120 >> "$hits"
+
+    git grep --cached -nIE "$ENV_ASSIGN" -- "$file" \
+        | grep -vE "$SAFE_VALUE" | cut -c1-120 >> "$hits"
+done
+
+if [ -s "$hits" ]; then
+    echo ""
+    echo "  COMMIT BLOCKED — credential detected in staged changes:"
+    echo ""
+    sort -u "$hits" | sed 's/^/    /'
+    echo ""
+    echo "  Put the real value in .env (git-ignored) and read it through config()."
+    echo "  Leave the matching key in .env.example empty."
+    echo ""
+    echo "  False positive? Re-run with:  git commit --no-verify"
+    echo ""
+    exit 1
+fi
+
+exit 0

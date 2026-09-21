@@ -1,0 +1,35 @@
+# Rendered at container start with the real $PORT (see docker/entrypoint.sh).
+server {
+    listen __PORT__;
+    listen [::]:__PORT__;
+    server_name _;
+
+    root /var/www/html/public;
+    index index.php;
+    charset utf-8;
+
+    # Allow reasonably sized uploads (e.g. profile photos).
+    client_max_body_size 20M;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location = /favicon.ico { access_log off; log_not_found off; }
+    location = /robots.txt  { access_log off; log_not_found off; }
+
+    error_page 404 /index.php;
+
+    location ~ \.php$ {
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_index index.php;
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        fastcgi_param DOCUMENT_ROOT $realpath_root;
+    }
+
+    # Deny access to hidden files except .well-known.
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}

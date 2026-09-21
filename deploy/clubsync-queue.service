@@ -1,0 +1,17 @@
+[Unit]
+Description=ClubSync queue worker
+After=network.target postgresql.service
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/clubsync
+# --tries=3: give a transient failure (e.g. a Gemini timeout) a few attempts before
+# giving up. --max-time=3600: restart the worker hourly so it picks up new code after
+# a deploy and never accumulates memory over days of uptime.
+ExecStart=/usr/bin/php artisan queue:work database --sleep=3 --tries=3 --max-time=3600
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

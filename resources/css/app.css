@@ -1,0 +1,32 @@
+@import 'tailwindcss';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+@source '../**/*.blade.php';
+@source '../**/*.js';
+
+@theme {
+    --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+        'Segoe UI Symbol', 'Noto Color Emoji';
+
+    /* Brand primary — change here to reskin the whole app. */
+    --color-primary: #07873e;
+}
+
+/*
+ * App "chrome" — the persistent navigation surfaces (left sidebar / mobile
+ * drawer AND the main top bar) all read from this ONE variable, so changing
+ * it in devtools recolors both at once. Slightly dark gray by default.
+ */
+:root {
+    /* Left sidebar / mobile drawer — slightly dark gray. */
+    --cs-chrome: #333a45;
+    --cs-chrome-border: rgba(255, 255, 255, 0.10);
+
+    /* Main top bar (header) — black, deliberately distinct from the sidebar. */
+    --cs-header: #111318;
+}
+
+[x-cloak] {
+    display: none !important;
+}
