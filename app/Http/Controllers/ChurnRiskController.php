@@ -15,17 +15,11 @@ class ChurnRiskController extends Controller
 
     public function index(Request $request): View
     {
-        $role = auth_role();
-
-        // Resolve which clubs this user may view. DSA sees all; officers see only
-        // clubs they hold a position in (per-club privilege, never global).
-        // Members and advisers never reach here — blocked by the route middleware.
-        if ($role === 'dsa') {
-            $clubs = Club::orderBy('name')->get(['id', 'name', 'acronym']);
-        } else {
-            $clubIds = ClubOfficer::where('user_id', auth_user_id())->pluck('club_id');
-            $clubs = Club::whereIn('id', $clubIds)->orderBy('name')->get(['id', 'name', 'acronym']);
-        }
+        // Officers see only the clubs they hold a position in (per-club privilege,
+        // never global). Members, advisers and the DSA never reach here — blocked by
+        // the route middleware; the DSA follows clubs on dsa.club-performance instead.
+        $clubIds = ClubOfficer::where('user_id', auth_user_id())->pluck('club_id');
+        $clubs = Club::whereIn('id', $clubIds)->orderBy('name')->get(['id', 'name', 'acronym']);
 
         $selectedClub = null;
         $rows = collect();
@@ -51,7 +45,6 @@ class ChurnRiskController extends Controller
             'rows'         => $rows,
             'summary'      => $summary,
             'semester'     => Semester::current()->first(),
-            'layout'       => $role === 'dsa' ? 'layouts.app-dsa' : 'layouts.app-officer',
         ]);
     }
 }

@@ -95,6 +95,7 @@
                 </svg>
                 Compliance
             </a>
+            <x-resources-nav-link />
             <x-notification-nav-link />
             <x-chat-nav-link />
         </nav>
@@ -180,6 +181,7 @@
                     </svg>
                     Compliance
                 </a>
+                <x-resources-nav-link variant="drawer" />
                 <x-notification-nav-link variant="drawer" />
                 <x-chat-nav-link variant="drawer" />
             </nav>
@@ -228,5 +230,7 @@
 
     <x-connection-status />
     <x-loading-overlay />
+    <x-flash-dialog />
+    <x-toast />
 </body>
 </html>

@@ -69,15 +69,6 @@
     </div>
 </div>
 
-{{-- Flash messages --}}
-<div class="px-4 pt-4 space-y-2">
-    @if(session('success'))
-        <div class="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-green-700 text-sm">
-            {{ session('success') }}
-        </div>
-    @endif
-</div>
-
 {{-- Upcoming activities grouped by month --}}
 <div class="px-4 py-4 space-y-5">
 

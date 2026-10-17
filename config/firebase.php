@@ -12,6 +12,11 @@ return [
     // Answers "is this email already registered?" with only the web API key.
     // accounts:lookup cannot: it needs an idToken or an admin credential.
     'create_auth_uri_url' => 'https://identitytoolkit.googleapis.com/v1/accounts:createAuthUri',
+    // Signs in (or links) with a Google ID token — "Continue with Google".
+    'sign_in_with_idp_url' => 'https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp',
     'refresh_url'        => 'https://securetoken.googleapis.com/v1/token',
     'send_oob_code_url'  => 'https://identitytoolkit.googleapis.com/v1/accounts:sendOobCode',
+    // Verifies a password-reset oobCode and applies the new password. ClubSync hosts the
+    // reset page itself (ResetPasswordController); Firebase only mints and emails the code.
+    'reset_password_url' => 'https://identitytoolkit.googleapis.com/v1/accounts:resetPassword',
 ];

@@ -22,6 +22,7 @@ return [
     */
     'session_days'           => (int) env('RETENTION_SESSION_DAYS', 7),   // expired sessions
     'read_notification_days' => (int) env('RETENTION_READ_NOTIF_DAYS', 90), // read notifications
+    'registration_draft_days' => (int) env('RETENTION_REGISTRATION_DRAFT_DAYS', 14), // unfinished registrations (RegistrationDraft)
 
     /*
     |--------------------------------------------------------------------------

@@ -11,22 +11,35 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 class ClubActivity extends Model
 {
     /**
-     * The SCC-configured venue list. POLICY.md § Event Creation requires venues to
-     * be chosen from this list rather than entered as free text.
+     * The SCC-configured venue list: rooms on the main campus only. POLICY.md
+     * § Event Creation requires venues to be chosen from this list rather than
+     * entered as free text. Every room is exclusive — findVenueConflict() blocks
+     * a second booking of the same room for an overlapping time.
      */
     public const VENUES = [
-        'SCC Gymnasium',
-        'Main AV Room',
-        'Open Court',
-        'Function Hall',
-        'Covered Court',
-        'Others',
+        'AVR',
+        'EB 2-1', 'EB 2-2', 'EB 2-3', 'EB 2-4', 'EB 2-5',
+        'EB 3-1', 'EB 3-2', 'EB 3-3', 'EB 3-4', 'EB 3-5',
+        'EB 4-5',
+        'Moot Court',
+        'JD 1', 'JD 2',
+        'PC 1-1', 'PC 1-2', 'PC 1-3', 'PC 1-4',
+        'PC 2-1', 'PC 2-2', 'PC 2-3', 'PC 2-4', 'PC 2-5', 'PC 2-6',
+        'PC 3-1',
+        'PC Lab A', 'PC Lab B', 'PC Lab C',
+        'SN 1-1', 'SN 1-2', 'SN 1-3',
+        'SN 2-2', 'SN 2-3',
+        'SN 3-1', 'SN 3-2',
+        'ST 1-1', 'ST 1-2',
+        'Library',
+        'YDC',
     ];
 
     /**
      * Venues that are not exclusive, so two activities naming one do not clash.
-     * "Others" is the catch-all on the venue list — two clubs picking it are not
-     * necessarily in the same room, so it must not block a booking.
+     * "Others" was the catch-all on the old venue list and is no longer offered;
+     * it stays here so activities booked under it before the switch to main-campus
+     * rooms never block each other when they are edited.
      */
     public const NON_EXCLUSIVE_VENUES = ['Others'];
 
@@ -41,7 +54,7 @@ class ClubActivity extends Model
 
     protected $fillable = [
         'club_id', 'title', 'description', 'date', 'time_start', 'time_end',
-        'venue', 'purpose', 'expected_participants', 'status', 'completed_at', 'event_type',
+        'venue', 'purpose', 'expected_participants', 'budget_amount', 'status', 'completed_at', 'event_type',
         'created_by', 'post_report_content', 'post_report_status',
         'activity_type', 'target_year_levels', 'approval_status', 'review_remarks',
         'approval_letter_path', 'approved_at', 'approved_by',
@@ -53,6 +66,7 @@ class ClubActivity extends Model
     protected $casts = [
         'date'                  => 'date',
         'expected_participants' => 'integer',
+        'budget_amount'         => 'decimal:2',
         'approved_at'           => 'datetime',
         'completed_at'          => 'datetime',
         'target_year_levels'    => 'array',
@@ -120,6 +134,13 @@ class ClubActivity extends Model
         return $this->belongsTo(User::class, 'approved_by');
     }
 
+    /** The query form of isConfirmed(): what members are told about and may see. */
+    public function scopeConfirmed(Builder $query): Builder
+    {
+        return $query->whereIn('approval_status', self::CONFIRMED_APPROVAL_STATUSES)
+            ->where('status', '!=', 'cancelled');
+    }
+
     public function scopeNeedsApproval($query)
     {
         return $query->where('activity_type', '!=', 'internal_meeting');
@@ -138,9 +159,27 @@ class ClubActivity extends Model
         return $this->hasMany(ActivityChangeLog::class)->orderByDesc('created_at');
     }
 
-    public function chedReport(): HasOne
+    /** Photos, receipts and properties the officers attached for the semester-end reports. */
+    public function photos(): HasMany
     {
-        return $this->hasOne(ChedReport::class, 'club_activity_id');
+        return $this->hasMany(ActivityPhoto::class)->orderBy('created_at')->orderBy('id');
+    }
+
+    public function isMeeting(): bool
+    {
+        return $this->activity_type === 'internal_meeting';
+    }
+
+    /**
+     * The narrative report already submitted to the DSA that covers this activity, if any.
+     * Its photos and budget are then part of an approved document and stay as they are.
+     */
+    public function submittedReport(): ?SemesterNarrativeReport
+    {
+        return SemesterNarrativeReport::submitted()
+            ->where('club_id', $this->club_id)
+            ->get()
+            ->first(fn (SemesterNarrativeReport $report) => in_array($this->id, $report->activityIds(), true));
     }
 
     /**

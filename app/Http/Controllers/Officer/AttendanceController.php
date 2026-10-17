@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Officer;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\NotifyMemberOfAttendance;
 use App\Models\Attendance;
 use App\Models\ClubActivity;
 use App\Models\ClubMember;
@@ -63,19 +64,31 @@ class AttendanceController extends Controller
             'user_id'  => $user->id,
         ]);
 
+        // The member is told each time, live (NotifyMemberOfAttendance).
+        $told = null;
+
         if ($action === 'in') {
             $record->time_in    = now();
             $record->time_out   = null;
             $record->recorded_by = auth_user_id();
             $record->save();
+            $told = NotifyMemberOfAttendance::CHECKED_IN;
         } elseif ($action === 'out') {
             if ($record->exists && $record->time_in) {
                 $record->time_out    = now();
                 $record->recorded_by = auth_user_id();
                 $record->save();
+                $told = NotifyMemberOfAttendance::CHECKED_OUT;
             }
         } elseif ($action === 'undo') {
-            $record->delete();
+            if ($record->exists) {
+                $record->delete();
+                $told = NotifyMemberOfAttendance::REMOVED;
+            }
+        }
+
+        if ($told) {
+            NotifyMemberOfAttendance::dispatch($event->id, $told, $user->id, auth_user_id());
         }
 
         return back();

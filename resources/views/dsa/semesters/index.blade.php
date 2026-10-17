@@ -5,18 +5,12 @@
 
 <div class="bg-[#07873e] px-5 py-4">
     <h1 class="text-white font-bold text-xl">Semesters</h1>
-    <p class="text-white/60 text-xs mt-0.5">Each club's narrative report is drafted the day after its semester ends</p>
+    <p class="text-white/60 text-xs mt-0.5">Each club's narrative report is drafted the day after its semester ends, or when you conclude it</p>
 </div>
 
 <div class="px-4 py-5 space-y-5">
 
-    @if(session('success'))
-        <div class="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-green-700 text-sm">{{ session('success') }}</div>
-    @endif
 
-    @if($errors->any())
-        <div class="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">{{ $errors->first() }}</div>
-    @endif
 
     {{-- Add a semester --}}
     <form method="POST" action="{{ route('dsa.semesters.store') }}" class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-3">
@@ -93,6 +87,21 @@
                         </label>
                         <button type="submit" class="border-2 border-[#07873e] text-[#07873e] font-semibold text-sm rounded-lg px-4 py-2 hover:bg-[#07873e]/5">Save</button>
                     </form>
+
+                    @unless($semester->start_date->gt(today()))
+                        <form method="POST" action="{{ route('dsa.semesters.conclude', $semester) }}"
+                              class="px-4 pb-4 pt-3 bg-gray-50/60 border-t border-gray-100 flex flex-wrap items-center justify-between gap-3"
+                              onsubmit="return confirm('Draft this semester\'s narrative reports now? Each adviser reviews their club\'s report before it is submitted to you.')">
+                            @csrf
+                            <p class="text-xs text-gray-500 max-w-md">
+                                Conclude the semester to have the AI draft each club's narrative report now, from its completed activities,
+                                instead of the day after {{ $semester->end_date->format('M j') }}. The dates stay as they are.
+                            </p>
+                            <button type="submit" class="bg-[#07873e] text-[#F9A825] font-semibold text-sm rounded-lg px-4 py-2.5 hover:opacity-90">
+                                Conclude &amp; Draft Reports
+                            </button>
+                        </form>
+                    @endunless
                 </details>
             @endforeach
         </div>

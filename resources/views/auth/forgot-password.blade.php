@@ -27,7 +27,7 @@
                 </div>
                 <h1 class="text-2xl font-bold text-green-900 mb-3">Check your email</h1>
                 <p class="text-gray-500 text-sm leading-relaxed mb-2">
-                    We've sent a password reset link to your email address.
+                    We've emailed you a password reset link. Open it to set a new password here in ClubSync.
                 </p>
                 <p class="text-gray-400 text-xs mb-10">
                     Didn't receive it? Check your spam folder or try again.
@@ -45,11 +45,6 @@
                 Enter your SCC institutional email and we'll send you a link to reset your password.
             </p>
 
-            @if($errors->any())
-                <div class="mb-5 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
-                    {{ $errors->first() }}
-                </div>
-            @endif
 
             <form method="POST" action="{{ route('forgot-password') }}" class="space-y-5">
                 @csrf
@@ -59,7 +54,7 @@
                     <input
                         type="email"
                         name="email"
-                        value="{{ old('email') }}"
+                        value="{{ old('email', $email ?? '') }}"
                         placeholder="yourname@sccpag.edu.ph"
                         autocomplete="email"
                         autofocus

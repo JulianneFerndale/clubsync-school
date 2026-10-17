@@ -20,7 +20,8 @@ class RetentionCheck extends Command
     public function handle(DatabaseStorageService $storage): int
     {
         $pruned = $storage->pruneTransient();
-        $this->info("Pruned {$pruned['sessions']} expired sessions, {$pruned['notifications']} old read notifications.");
+        $this->info("Pruned {$pruned['sessions']} expired sessions, {$pruned['notifications']} old read notifications, "
+            . "{$pruned['registration_drafts']} expired unfinished registrations.");
 
         $status = $storage->status();
         $this->info("Database at {$status['percent']}% of cap ({$status['level']}).");

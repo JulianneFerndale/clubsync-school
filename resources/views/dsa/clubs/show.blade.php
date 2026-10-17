@@ -60,11 +60,6 @@
 
 <div class="max-w-6xl mx-auto px-4 md:px-8 py-6 space-y-6">
 
-    @if(session('success'))
-        <div class="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-green-700 text-sm">
-            {{ session('success') }}
-        </div>
-    @endif
 
     {{-- Stats --}}
     <section aria-label="Club statistics" class="grid grid-cols-3 gap-2.5 md:gap-5">
@@ -219,6 +214,56 @@
         </div>
     </section>
     @endif
+
+    {{-- Delete: collapsed, and confirmed by typing the acronym, so it cannot happen by accident --}}
+    <section aria-label="Delete club">
+        <details class="bg-white rounded-xl border border-red-200 shadow-sm" @if($errors->has('confirm_acronym')) open @endif>
+            <summary class="flex items-center justify-between gap-3 px-4 py-3 cursor-pointer list-none">
+                <span class="text-sm font-semibold text-red-700">Delete this club</span>
+                <span class="text-xs text-gray-500">Permanent — cannot be undone</span>
+            </summary>
+
+            <form method="POST" action="{{ route('dsa.clubs.destroy', $club) }}" class="px-4 pb-4 space-y-3 border-t border-red-100">
+                @csrf
+                @method('DELETE')
+
+                <p class="text-sm text-gray-700 pt-3">
+                    This permanently deletes <span class="font-semibold">{{ $club->name }}</span> and all of its data:
+                </p>
+                <ul class="text-sm text-gray-600 list-disc pl-5 space-y-0.5">
+                    <li>{{ $deletion['members'] }} {{ str('membership')->plural($deletion['members']) }}, including pending applications and semester presence</li>
+                    <li>{{ $deletion['officers'] }} officer {{ str('post')->plural($deletion['officers']) }} — officers of no other club go back to the Member role</li>
+                    <li>{{ $deletion['activities'] }} {{ str('activity')->plural($deletion['activities']) }}, with their attendance, approval letters and AI narratives</li>
+                    <li>{{ $deletion['announcements'] }} {{ str('announcement')->plural($deletion['announcements']) }}, with their comments and likes</li>
+                    <li>{{ $deletion['fees'] }} {{ str('fee')->plural($deletion['fees']) }}, with every payment and receipt recorded against them</li>
+                    <li>{{ $deletion['reports'] }} semester {{ str('report')->plural($deletion['reports']) }} and their files, plus the club's notifications, compliance items and logo</li>
+                    @if($clubType === 'academic')
+                        <li>Its course mapping — students of a course no other academic club covers are flagged Pending Club Assignment</li>
+                    @endif
+                </ul>
+                <p class="text-xs text-gray-500">
+                    The audit log keeps its record of the club, as the retention policy requires. To hide a club without losing anything,
+                    <a href="{{ route('dsa.clubs.edit', $club) }}" class="text-[#07873e] font-semibold hover:underline">mark it inactive</a> instead.
+                </p>
+
+                <div>
+                    <label for="confirm_acronym" class="block text-xs text-gray-600 mb-1">
+                        Type <span class="font-mono font-semibold text-gray-900">{{ $confirmationWord }}</span> to confirm
+                    </label>
+                    <input id="confirm_acronym" type="text" name="confirm_acronym" required autocomplete="off"
+                           class="w-full sm:w-72 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-300">
+                    @error('confirm_acronym')
+                        <p class="text-xs text-red-600 mt-1">{{ $message }}</p>
+                    @enderror
+                </div>
+
+                <button type="submit"
+                        class="bg-red-600 text-white font-semibold text-sm rounded-lg px-4 py-2.5 hover:bg-red-700 transition-colors">
+                    Delete Club Permanently
+                </button>
+            </form>
+        </details>
+    </section>
 
 </div>
 @endsection

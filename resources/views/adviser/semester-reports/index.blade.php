@@ -36,9 +36,16 @@
                             <div class="flex-1 min-w-0">
                                 <p class="text-sm font-semibold text-gray-800 truncate">{{ $report->semester->label }}</p>
                                 <p class="text-xs text-gray-400 mt-0.5">
-                                    {{ $report->club->name }} · {{ $report->activity_data['totals']['activities'] }} activities · drafted {{ $report->created_at->diffForHumans() }}
+                                    {{ $report->club->name }} · {{ $report->activity_data['totals']['activities'] }} activities ·
+                                    {{ $report->isReturned() ? 'returned ' . $report->returned_at->diffForHumans() : 'drafted ' . $report->created_at->diffForHumans() }}
                                 </p>
+                                @if($report->isReturned())
+                                    <p class="text-xs text-orange-700 mt-1 line-clamp-2">DSA's remarks: {{ $report->return_remarks }}</p>
+                                @endif
                                 <div class="flex items-center gap-2 mt-1.5">
+                                    @if($report->isReturned())
+                                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[10px] font-semibold">Returned by the DSA — revise &amp; resubmit</span>
+                                    @endif
                                     @if($report->ai_available)
                                         <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-50 text-purple-600 text-[10px] font-semibold">✦ AI draft</span>
                                     @else

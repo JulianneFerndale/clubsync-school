@@ -16,12 +16,6 @@
 
 <div class="px-4 py-5 space-y-3">
 
-    @if(session('success'))
-        <div class="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-green-700 text-sm">{{ session('success') }}</div>
-    @endif
-    @if(session('info'))
-        <div class="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-blue-700 text-sm">{{ session('info') }}</div>
-    @endif
     @error('club')
         <div class="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-600 text-sm">{{ $message }}</div>
     @enderror

@@ -15,7 +15,19 @@
     @endif
 
     <div class="flex-1 overflow-y-auto px-8 pt-10 pb-12">
+        <x-register-steps :current="1" />
+
         <h1 class="text-2xl font-bold text-green-800 mb-7">Register New Account</h1>
+
+        {{-- Registering with Google needs no password: GoogleController → auth/register-google. --}}
+        <x-google-sign-in label="Register with Google" divider="" class="mb-2" />
+        @if (app(\App\Services\GoogleSignIn::class)->isConfigured())
+            <div class="flex items-center gap-3 my-6" aria-hidden="true">
+                <span class="flex-1 h-px bg-gray-200"></span>
+                <span class="text-xs text-gray-400">or register with a password</span>
+                <span class="flex-1 h-px bg-gray-200"></span>
+            </div>
+        @endif
 
         @if ($errors->hasAny(['first_name','last_name','edp_number','year_level','email','password','mobile_number']))
             <div class="mb-5 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
@@ -44,13 +56,13 @@
             <div class="grid grid-cols-2 gap-3">
                 <div>
                     <label class="block text-xs font-medium text-gray-600 mb-1">First Name</label>
-                    <input type="text" name="first_name" value="{{ old('first_name') }}"
+                    <input type="text" name="first_name" value="{{ old('first_name', session('register.first_name')) }}"
                            placeholder="First Name"
                            class="w-full border border-gray-300 rounded-xl px-3 py-3 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition @error('first_name') border-red-400 @enderror">
                 </div>
                 <div>
                     <label class="block text-xs font-medium text-gray-600 mb-1">Last Name</label>
-                    <input type="text" name="last_name" value="{{ old('last_name') }}"
+                    <input type="text" name="last_name" value="{{ old('last_name', session('register.last_name')) }}"
                            placeholder="Last Name"
                            class="w-full border border-gray-300 rounded-xl px-3 py-3 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition @error('last_name') border-red-400 @enderror">
                 </div>
@@ -59,7 +71,7 @@
             <div class="grid grid-cols-2 gap-3">
                 <div>
                     <label class="block text-xs font-medium text-gray-600 mb-1">EDP Number</label>
-                    <input type="text" name="edp_number" value="{{ old('edp_number') }}"
+                    <input type="text" name="edp_number" value="{{ old('edp_number', session('register.edp_number')) }}"
                            placeholder="EDP Number"
                            class="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition @error('edp_number') border-red-400 @enderror">
                 </div>
@@ -67,9 +79,9 @@
                     <label class="block text-xs font-medium text-gray-600 mb-1">Year Level</label>
                     <select name="year_level"
                             class="w-full border border-gray-300 rounded-xl px-3 py-3 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition @error('year_level') border-red-400 @enderror">
-                        <option value="" {{ old('year_level') === null ? 'selected' : '' }}>Select…</option>
+                        <option value="" {{ old('year_level', session('register.year_level')) === null ? 'selected' : '' }}>Select…</option>
                         @foreach([1 => '1st Year', 2 => '2nd Year', 3 => '3rd Year', 4 => '4th Year'] as $value => $label)
-                            <option value="{{ $value }}" {{ (string) old('year_level') === (string) $value ? 'selected' : '' }}>{{ $label }}</option>
+                            <option value="{{ $value }}" {{ (string) old('year_level', session('register.year_level')) === (string) $value ? 'selected' : '' }}>{{ $label }}</option>
                         @endforeach
                     </select>
                 </div>
@@ -77,7 +89,7 @@
 
             <div>
                 <label class="block text-xs font-medium text-gray-600 mb-1">Institutional Email</label>
-                <input type="email" name="email" id="email-field" value="{{ old('email') }}"
+                <input type="email" name="email" id="email-field" value="{{ old('email', session('register.email')) }}"
                        placeholder="yourname@sccpag.edu.ph (SCC email)"
                        autocomplete="email"
                        class="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition @error('email') border-red-400 @enderror">
@@ -85,7 +97,7 @@
             </div>
 
             <div>
-                <label class="block text-xs font-medium text-gray-600 mb-1">Password</label>
+                <label class="block text-xs font-medium text-gray-600 mb-1">Password <span class="font-normal text-gray-400">— at least 8 characters, with an uppercase letter, a lowercase letter and a number</span></label>
                 <div class="relative">
                     <input type="password" name="password" id="password"
                            placeholder="••••••••••"
@@ -124,7 +136,7 @@
 
             <div>
                 <label class="block text-xs font-medium text-gray-600 mb-1">Mobile Number</label>
-                <input type="tel" name="mobile_number" value="{{ old('mobile_number') }}"
+                <input type="tel" name="mobile_number" value="{{ old('mobile_number', session('register.mobile_number')) }}"
                        placeholder="09XX XXXX XXXX"
                        class="w-full border border-gray-300 rounded-xl px-4 py-3 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition @error('mobile_number') border-red-400 @enderror">
             </div>

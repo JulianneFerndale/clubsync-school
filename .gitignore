@@ -28,3 +28,14 @@ _ide_helper.php
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Load-test rehearsal output (session cookies for fake students, results)
+/loadtest/out/
+
+# Browser-test screenshots and downloads (they show signed-in pages and receipts)
+/.playwright-mcp/
+
+# Real student ID and COE used to try enrollment verification by hand
+/docs/id-front.jpeg
+/docs/id-back.jpeg
+/docs/certificate-of-enrollment.pdf

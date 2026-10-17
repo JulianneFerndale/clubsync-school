@@ -15,11 +15,6 @@
 
 <div class="px-4 py-5">
 
-    @if($errors->any())
-        <div class="mb-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
-            {{ $errors->first() }}
-        </div>
-    @endif
 
     <form method="POST" action="{{ route('dsa.clubs.update', $club) }}" enctype="multipart/form-data" class="space-y-4"
           data-loading="dialog" data-loading-message="Saving changes">

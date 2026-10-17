@@ -29,4 +29,23 @@ return [
         'timezone' => env('GOOGLE_CALENDAR_TIMEZONE', 'Asia/Manila'),
     ],
 
+    'sign_in' => [
+        /*
+        |----------------------------------------------------------------------
+        | "Continue with Google" (SCC Google Workspace accounts only)
+        |----------------------------------------------------------------------
+        | An OAuth 2.0 "Web application" client. The button and its routes stay
+        | off until both values are set. Setup: docs/GOOGLE-SIGN-IN-SETUP.md.
+        |
+        | The accepted domain is deliberately NOT configurable here: it is fixed
+        | in App\Services\GoogleSignIn::DOMAIN so no .env slip can widen it.
+        */
+        'client_id'     => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+
+        // Must match an "Authorized redirect URI" of the client exactly. Left blank,
+        // it is this app's /auth/google/callback on whatever host served the page.
+        'redirect_uri'  => env('GOOGLE_REDIRECT_URI'),
+    ],
+
 ];

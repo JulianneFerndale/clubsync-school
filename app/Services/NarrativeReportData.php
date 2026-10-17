@@ -2,9 +2,12 @@
 
 namespace App\Services;
 
+use App\Models\ActivityPhoto;
 use App\Models\Club;
 use App\Models\ClubActivity;
+use App\Models\Fee;
 use App\Models\Semester;
+use App\Models\SemesterNarrativeReport;
 use Carbon\Carbon;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
@@ -24,7 +27,7 @@ class NarrativeReportData
     /** Facts for a single activity. */
     public static function activity(ClubActivity $activity): array
     {
-        $sheet   = $activity->attendance()->get();
+        $sheet   = $activity->attendance()->with('user:id,first_name,last_name')->get();
         $present = $sheet->whereNotNull('time_in');
 
         $expected = (int) $activity->expected_participants;
@@ -34,6 +37,7 @@ class NarrativeReportData
             'id'                  => $activity->id,
             'title'               => $activity->title,
             'type'                => $activity->activity_type_label,
+            'is_meeting'          => $activity->isMeeting(),
             'date'                => $activity->date->format('F j, Y'),
             'time'                => self::clock($activity->time_start) . ' to ' . self::clock($activity->time_end),
             'venue'               => $activity->venue,
@@ -44,7 +48,19 @@ class NarrativeReportData
             'attended'            => $attended,
             'turnout'             => $expected > 0 ? round($attended / $expected * 100, 1) : null,
             'post_report'         => $activity->post_report_content ?: null,
+            'approved_by'         => $activity->approval_status === 'approved' ? $activity->approvedBy?->name : null,
+            'approved_on'         => $activity->approval_status === 'approved' ? $activity->approved_at?->format('F j, Y') : null,
             'attendee_ids'        => $present->pluck('user_id')->unique()->values()->all(),
+            // Annex B of the accomplishment report is the attendance list itself, so the
+            // names are kept with the report (names only — never e-mail or EDP numbers).
+            'attendees'           => $present
+                ->sortBy(fn ($row) => mb_strtolower((string) $row->user?->last_name . ' ' . $row->user?->first_name))
+                ->map(fn ($row) => [
+                    'name'    => $row->user ? trim("{$row->user->last_name}, {$row->user->first_name}") : 'Former member',
+                    'time_in' => $row->time_in->format('g:i A'),
+                ])
+                ->values()
+                ->all(),
         ];
     }
 
@@ -75,16 +91,58 @@ class NarrativeReportData
             'turnout'          => $expected > 0 ? round($attended / $expected * 100, 1) : null,
         ];
 
+        $officers = $club->officers()->with('user:id,first_name,last_name')->get()
+            ->mapWithKeys(fn ($officer) => [$officer->position => $officer->user?->name])
+            ->filter()
+            ->all();
+
         return [
-            'club'       => $club->name,
-            'adviser'    => $club->adviserUser?->name,
-            'semester'   => $semester->label,
-            'start'      => $semester->start_date->format('F j, Y'),
-            'end'        => $semester->end_date->format('F j, Y'),
-            'totals'     => $totals,
-            // Who attended is only needed for the unique count; the report keeps the numbers.
-            'activities' => $activities->map(fn (array $a) => Arr::except($a, ['attendee_ids']))->values()->all(),
+            'club'          => $club->name,
+            'club_acronym'  => $club->acronym,
+            'adviser'       => $club->adviserUser?->name,
+            'officers'      => $officers,
+            'semester'      => $semester->label,
+            'term'          => $semester->term,
+            'academic_year' => $semester->academic_year,
+            'start'         => $semester->start_date->format('F j, Y'),
+            'end'           => $semester->end_date->format('F j, Y'),
+            'totals'        => $totals,
+            'fees'          => self::fees($club, $semester),
+            // Who attended is only needed for the unique count; the names stay for Annex B.
+            'activities'    => $activities->map(fn (array $a) => Arr::except($a, ['attendee_ids']))->values()->all(),
         ];
+    }
+
+    /**
+     * The club's fee collections falling in the semester, for the financial report:
+     * what each fee is, how many members it was charged to, how many paid, and the total
+     * collected. A fee belongs to the semester its due date falls in (its creation date
+     * when it has none).
+     *
+     * @return list<array{title: string, amount: float, billed: int, paid: int, collected: float}>
+     */
+    public static function fees(Club $club, Semester $semester): array
+    {
+        $start = $semester->start_date->copy()->startOfDay();
+        $end   = $semester->end_date->copy()->endOfDay();
+
+        // A cancelled fee was not collected, so it is not part of the club's account.
+        return Fee::where('club_id', $club->id)
+            ->notCancelled()
+            ->withCount(['payments as billed', 'payments as paid' => fn ($q) => $q->where('status', 'paid')])
+            ->orderBy('due_date')
+            ->orderBy('id')
+            ->get()
+            ->filter(fn (Fee $fee) => ($fee->due_date ?? $fee->created_at)?->between($start, $end))
+            ->map(fn (Fee $fee) => [
+                'title'     => $fee->title,
+                'amount'    => (float) $fee->amount,
+                'billed'    => (int) $fee->billed,
+                'paid'      => (int) $fee->paid,
+                'collected' => round((float) $fee->amount * (int) $fee->paid, 2),
+            ])
+            ->values()
+            ->all();
     }
 
     /** One activity's facts as the labelled text block a prompt carries. */
@@ -187,6 +245,107 @@ class NarrativeReportData
 
         if ($unsupported !== []) {
             $warnings[] = 'These figures do not appear in the activity records: ' . implode(', ', $unsupported) . '.';
+        }
+
+        return $warnings;
+    }
+
+    /**
+     * What the officers attached to an activity for the report — photo counts, the
+     * budget, receipts and properties — as the labelled text a prompt carries. Built
+     * from the same rows the documents print, so a figure the AI quotes from here is
+     * one the document shows.
+     */
+    public static function recordsText(int $activityId, ?SemesterNarrativeReport $report = null): string
+    {
+        $activity = ClubActivity::find($activityId);
+        $photos   = ActivityPhoto::where('club_activity_id', $activityId)
+            ->when($report?->submitted_at, fn ($q) => $q->where('created_at', '<=', $report->submitted_at))
+            ->orderBy('created_at')
+            ->get();
+
+        $counts = $photos->countBy('category');
+        $lines  = [];
+
+        $attached = collect(ActivityPhoto::CATEGORIES)
+            ->filter(fn ($category, $key) => $counts->has($key) && ! in_array($key, ['receipt', 'property'], true))
+            ->map(fn ($category, $key) => $counts[$key] . ' ' . Str::lower($category['label']))
+            ->implode('; ');
+
+        $lines[] = 'Photos attached by the officers: ' . ($attached !== '' ? $attached : 'none');
+
+        if ($activity?->budget_amount !== null) {
+            $lines[] = 'Budget released: PHP ' . number_format((float) $activity->budget_amount, 2);
+        }
+
+        $receipts = $photos->where('category', 'receipt');
+        if ($receipts->isNotEmpty()) {
+            $lines[] = 'Receipts (' . $receipts->count() . '), total PHP ' . number_format((float) $receipts->sum('amount'), 2) . ': '
+                . $receipts->map(fn ($r) => "{$r->caption} PHP " . number_format((float) $r->amount, 2))->implode('; ');
+        }
+
+        $properties = $photos->where('category', 'property');
+        if ($properties->isNotEmpty()) {
+            $lines[] = 'Properties used: ' . $properties->map(fn ($p) => "{$p->caption} ({$p->quantity}" . ($p->remarks ? ", {$p->remarks}" : '') . ')')->implode('; ');
+        }
+
+        return implode("\n", $lines);
+    }
+
+    /**
+     * Where the adviser's working copy of the per-activity sections falls short of the
+     * records — the same kind of warnings as reviewWarnings(), one activity at a time.
+     *
+     * @param  array<int, array<string, string>>  $sections  Keyed by activity id.
+     * @param  array<int, string>  $records  recordsText() for each activity, keyed by id.
+     * @return list<string>
+     */
+    public static function sectionWarnings(array $data, array $sections, array $records = []): array
+    {
+        $warnings = [];
+        $header   = implode("\n", [
+            "Club: {$data['club']}",
+            "Semester: {$data['semester']} ({$data['start']} to {$data['end']})",
+        ]);
+
+        foreach ($data['activities'] as $i => $activity) {
+            $own   = $sections[$activity['id']] ?? [];
+            $title = $activity['title'];
+
+            foreach (SemesterNarrativeReport::SECTIONS as $key => $label) {
+                if ($key === 'minutes' && empty($activity['is_meeting'])) {
+                    continue;
+                }
+
+                if (trim((string) ($own[$key] ?? '')) === '') {
+                    $warnings[] = "{$label} for \"{$title}\" is empty.";
+                }
+            }
+
+            $introduction = (string) ($own['introduction'] ?? '');
+
+            if ($activity['attendance_recorded'] && trim($introduction) !== '') {
+                $missing = array_diff(
+                    [self::number((string) $activity['attended']), self::number((string) $activity['expected'])],
+                    self::figures($introduction),
+                );
+
+                if ($missing !== []) {
+                    $warnings[] = "The introduction for \"{$title}\" does not state its attendance "
+                        . "({$activity['attended']} attended of {$activity['expected']} expected).";
+                }
+            }
+
+            $facts = implode("\n", [$header, 'Activity ' . ($i + 1) . ' of ' . count($data['activities']), self::activityText($activity), $records[$activity['id']] ?? '']);
+
+            $unsupported = array_values(array_diff(
+                self::figures(implode("\n", array_map('strval', $own))),
+                self::figures($facts),
+            ));
+
+            if ($unsupported !== []) {
+                $warnings[] = "These figures for \"{$title}\" do not appear in its records: " . implode(', ', $unsupported) . '.';
+            }
         }
 
         return $warnings;

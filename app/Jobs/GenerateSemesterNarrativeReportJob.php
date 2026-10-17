@@ -10,6 +10,7 @@ use App\Models\SemesterNarrativeReport;
 use App\Models\User;
 use App\Services\GeminiService;
 use App\Services\NarrativeReportData;
+use App\Services\NarrativeTemplate;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -19,13 +20,19 @@ use Illuminate\Queue\SerializesModels;
 /**
  * Draft one club's end-of-semester narrative report and hand it to the adviser.
  *
- * The draft covers every activity the club completed in the semester, written from
- * NarrativeReportData. It is held as pending_review: nothing reaches the DSA until
- * the adviser has reviewed it and submitted it (POLICY.md § AI & Automation).
+ * The report is the five DSA documents. Gemini drafts the written sections of each
+ * completed activity (introduction, rationale, minutes for meetings, recommendations)
+ * from NarrativeReportData and the records the officers attached; the documents
+ * compile those sections with the activity, attendance, photo and finance records.
+ * It is held as pending_review: nothing reaches the DSA until the adviser has
+ * reviewed it and submitted it (POLICY.md § AI & Automation).
  */
 class GenerateSemesterNarrativeReportJob implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    /** One Gemini request per activity, each allowed 90 seconds. */
+    public int $timeout = 900;
 
     public function __construct(private int $clubId, private int $semesterId) {}
 
@@ -49,27 +56,58 @@ class GenerateSemesterNarrativeReportJob implements ShouldQueue
             return;
         }
 
-        $draft = $gemini->draftSemesterNarrative($data);
+        // Every activity gets an entry, so the review page and the documents always have
+        // the same shape. One the AI cannot draft starts from its records in a fixed
+        // template instead of blank (POLICY.md § AI & Automation), marked as such in
+        // ai_sections so the page flags it and `ai:catch-up` can ask the AI again later.
+        // During a Gemini outage every call returns at once, so this stays quick.
+        $sections = [];
+        $first    = [];
+        $drafted  = 0;
+
+        foreach ($data['activities'] as $i => $activity) {
+            $records = NarrativeReportData::recordsText($activity['id']);
+            $draft   = $gemini->draftReportSections($data, $activity, $i + 1, $records);
+
+            if ($draft !== null) {
+                $sections[$activity['id']] = $first[$activity['id']] = $draft;
+                $drafted++;
+
+                continue;
+            }
+
+            $sections[$activity['id']] = NarrativeTemplate::sections($activity);
+            $first[$activity['id']]    = $sections[$activity['id']] + ['source' => NarrativeTemplate::SOURCE];
+        }
+
+        $total = count($data['activities']);
 
         $report = SemesterNarrativeReport::create([
             'club_id'       => $club->id,
             'semester_id'   => $semester->id,
             'activity_data' => $data,
-            'draft_content' => $draft,
-            'ai_available'  => $draft !== null,
+            'ai_sections'   => $first,
+            'sections'      => $sections,
+            'ai_available'  => $drafted === $total,
             'status'        => 'pending_review',
         ]);
 
         AuditLog::record('ai.semester_report.generated', $report, [
             'club_id'      => $club->id,
             'semester_id'  => $semester->id,
-            'activities'   => $data['totals']['activities'],
-            'ai_available' => $draft !== null,
+            'activities'   => $total,
+            'drafted'      => $drafted,
+            'ai_available' => $drafted === $total,
         ]);
 
-        $status = $draft !== null
-            ? 'has been drafted and is awaiting your review before it is submitted to the DSA.'
-            : 'could not be drafted (AI Unavailable — Manual Draft Required). Please write the narrative before submitting it to the DSA.';
+        $template = 'were filled in from their records as a starting template. Check and complete them before submitting '
+            . 'it to the DSA; ClubSync asks the AI again later for any you leave unchanged.';
+
+        $status = match (true) {
+            $drafted === $total => 'has been drafted and is awaiting your review before it is submitted to the DSA.',
+            $drafted === 0      => "could not be drafted by the AI (AI Unavailable — Manual Draft Required). Its activities {$template}",
+            default             => "was only partly drafted by the AI: {$drafted} of {$total} activities (AI Unavailable — Manual Draft Required for the rest). The rest {$template}",
+        };
 
         if ($club->adviser_id) {
             ClubNotification::create([
@@ -77,7 +115,8 @@ class GenerateSemesterNarrativeReportJob implements ShouldQueue
                 'sender_type'  => 'ai_queue',
                 'club_id'      => $club->id,
                 'title'        => 'Semester narrative report ready for review',
-                'body'         => "{$club->name}: the {$semester->label} narrative report, covering "
+                'body'         => "{$club->name}: the {$semester->label} narrative report (accomplishment, minutes, financial, "
+                    . 'property inventory and communications documents), covering '
                     . "{$data['totals']['activities']} completed " . str('activity')->plural($data['totals']['activities'])
                     . ", {$status}",
                 'action_url'   => route('adviser.semester-reports.show', $report),

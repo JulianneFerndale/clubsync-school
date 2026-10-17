@@ -5,6 +5,7 @@ namespace App\Http\Controllers\DSA;
 use App\Http\Controllers\Controller;
 use App\Models\Club;
 use App\Models\ClubActivity;
+use App\Models\EnrollmentVerification;
 use App\Services\AcleMonitorService;
 use App\Services\OfficerTurnover;
 use Illuminate\Http\Request;
@@ -29,9 +30,13 @@ class DashboardController extends Controller
         $turnoverPending = $this->turnover->pendingClubs();
         $academicYear    = $this->turnover->academicYear();
 
+        // New students the automatic enrollment check could not decide; each one is
+        // locked out of ClubSync until somebody here does.
+        $verificationsPending = EnrollmentVerification::where('status', EnrollmentVerification::STATUS_PENDING)->count();
+
         return view('dsa.dashboard', array_merge(
             compact('totalClubs', 'academicClubs', 'nonAcademicClubs', 'totalActivities',
-                'turnoverPending', 'academicYear'),
+                'turnoverPending', 'academicYear', 'verificationsPending'),
             $this->acleMonitor->build($request),
         ));
     }

@@ -8,6 +8,8 @@ use App\Models\FeePayment;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Storage;
 
 uses(RefreshDatabase::class);
 
@@ -189,6 +191,158 @@ it('puts the payment on the receipt', function () {
         // The amount in words, as a receipt writes it.
         ->toContain('One hundred fifty pesos and fifty centavos only')
         ->toContain($officer->first_name);   // received by
+});
+
+// ── The letterhead: the school's crest and the club's own logo ──────────────
+
+/** The receipt as HTML, rendered from the same view the PDF is built from. */
+function frReceiptHtml(Club $club, Fee $fee): string
+{
+    $payment = FeePayment::with('user', 'confirmer')->first();
+
+    return view('fees.receipt-pdf', compact('payment', 'fee', 'club'))->render();
+}
+
+/** A one-colour image, the way an upload arrives. */
+function frImage(int $width, int $height, array $rgb = [220, 30, 30], string $type = 'jpeg'): string
+{
+    $image = imagecreatetruecolor($width, $height);
+    imagefill($image, 0, 0, imagecolorallocate($image, ...$rgb));
+
+    ob_start();
+    $type === 'png' ? imagepng($image) : imagejpeg($image, null, 90);
+
+    return ob_get_clean();
+}
+
+/** The image embedded in the receipt under `$alt`, as [mime type, decoded image]. */
+function frEmbedded(string $html, string $alt): ?array
+{
+    $pattern = '/<img src="data:(image\/[a-z]+);base64,([^"]+)" alt="' . preg_quote(e($alt), '/') . '"/';
+
+    if (! preg_match($pattern, $html, $m)) {
+        return null;
+    }
+
+    return [$m[1], imagecreatefromstring(base64_decode($m[2]))];
+}
+
+function frRgb(GdImage $image, int $x, int $y): array
+{
+    $c = imagecolorat($image, $x, $y);
+
+    return [($c >> 16) & 0xFF, ($c >> 8) & 0xFF, $c & 0xFF];
+}
+
+it('prints the Saint Columban College crest', function () {
+    [$club, $officer, $member, $fee] = frSetup();
+    frMarkPaid($officer, $fee, $member);
+
+    [$mime, $crest] = frEmbedded(frReceiptHtml($club, $fee), 'Saint Columban College');
+
+    // Inline, because dompdf does not load images by URL.
+    expect($mime)->toBe('image/png')
+        ->and(imagesx($crest))->toBe(200);
+});
+
+it('prints the club logo the DSA uploaded, scaled down and not cropped', function (Closure $url) {
+    Storage::fake('public');
+    Storage::disk('public')->put('clubs/logos/logo.jpg', frImage(800, 400));
+
+    [$club, $officer, $member, $fee] = frSetup();
+    $club->update(['profile_photo_url' => $url()]);
+    frMarkPaid($officer, $fee, $member);
+
+    $html = frReceiptHtml($club, $fee);
+    [$mime, $logo] = frEmbedded($html, $club->name);
+
+    // A wide logo fits inside the square whole: red across the middle, white above
+    // and below it, never stretched or cut.
+    expect($mime)->toBe('image/jpeg')
+        ->and([imagesx($logo), imagesy($logo)])->toBe([200, 200])
+        ->and(frRgb($logo, 100, 100)[0])->toBeGreaterThan(180)
+        ->and(frRgb($logo, 100, 100)[1])->toBeLessThan(80)
+        ->and(frRgb($logo, 100, 10))->each->toBeGreaterThan(240)
+        ->and($html)->not->toContain('class="initials"');
+})->with([
+    'as stored by the DSA upload' => fn () => '/storage/clubs/logos/logo.jpg',
+    'as the public disk full URL' => fn () => config('filesystems.disks.public.url') . '/clubs/logos/logo.jpg',
+]);
+
+it('prints a club logo kept on another host, fetching it once', function () {
+    Http::preventStrayRequests();
+    Http::fake(['storage.googleapis.com/*' => Http::response(frImage(300, 300, [0, 0, 200], 'png'))]);
+
+    [$club, $officer, $member, $fee] = frSetup();
+    $club->update(['profile_photo_url' => 'https://storage.googleapis.com/bucket/club_images/logo.png']);
+    frMarkPaid($officer, $fee, $member);
+
+    frReceiptHtml($club, $fee);
+    [$mime, $logo] = frEmbedded(frReceiptHtml($club, $fee), $club->name);
+
+    expect($mime)->toBe('image/png')
+        ->and(frRgb($logo, 100, 100)[2])->toBeGreaterThan(180);
+
+    // A treasurer printing a receipt per member does not fetch the logo per receipt.
+    Http::assertSentCount(1);
+});
+
+it('prints the club initials when its logo cannot be shown', function (?string $url) {
+    Http::preventStrayRequests();
+    Http::fake(['storage.googleapis.com/*' => Http::response('Forbidden', 403)]);
+    Storage::fake('public');
+    Storage::disk('public')->put('clubs/logos/notes.jpg', 'not an image');
+
+    [$club, $officer, $member, $fee] = frSetup();
+    $club->update(['profile_photo_url' => $url]);
+    frMarkPaid($officer, $fee, $member);
+
+    $html = frReceiptHtml($club, $fee);
+
+    // The receipt still prints, with the crest, and the club is still marked.
+    expect(frEmbedded($html, $club->name))->toBeNull()
+        ->and(frEmbedded($html, 'Saint Columban College'))->not->toBeNull()
+        ->and($html)->toMatch('/class="initials">\s*FC\s*</');
+
+    $this->withSession(frSession($officer))
+        ->get(route('officer.fees.receipt', [$fee, $member->id]))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf');
+})->with([
+    'no logo'           => [null],
+    'a dead link'       => ['https://storage.googleapis.com/bucket/club_images/gone.jpg'],
+    'a missing file'    => ['/storage/clubs/logos/gone.jpg'],
+    'not an image'      => ['/storage/clubs/logos/notes.jpg'],
+    'a path outside'    => ['/storage/../../.env'],
+]);
+
+it('keeps the receipt small when the club logo is a full-size upload', function () {
+    // Noise does not compress, so this is the worst a 788 px upload can be — the size
+    // of the largest club logo on record. Embedded as uploaded it is over 500 KB.
+    $image = imagecreatetruecolor(788, 788);
+    for ($x = 0; $x < 788; $x++) {
+        for ($y = 0; $y < 788; $y++) {
+            imagesetpixel($image, $x, $y, mt_rand(0, 0xFFFFFF));
+        }
+    }
+    ob_start();
+    imagejpeg($image, null, 90);
+    $upload = ob_get_clean();
+
+    Storage::fake('public');
+    Storage::disk('public')->put('clubs/logos/big.jpg', $upload);
+
+    [$club, $officer, $member, $fee] = frSetup();
+    $club->update(['profile_photo_url' => '/storage/clubs/logos/big.jpg']);
+    frMarkPaid($officer, $fee, $member);
+
+    $pdf = $this->withSession(frSession($officer))
+        ->get(route('officer.fees.receipt', [$fee, $member->id]))
+        ->assertOk()
+        ->getContent();
+
+    expect(strlen($upload))->toBeGreaterThan(500 * 1024)
+        ->and(strlen($pdf))->toBeLessThan(150 * 1024);
 });
 
 it('has no receipt to give before the payment is confirmed', function () {

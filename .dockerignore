@@ -12,6 +12,9 @@ storage/logs/*
 storage/framework/cache/data/*
 storage/framework/sessions/*
 storage/framework/views/*
+# Local caches: the package list names dev-only providers (Pail) that --no-dev
+# leaves out, and a cached config would carry the local .env's secrets.
+bootstrap/cache/*.php
 .env
 .env.*
 !.env.example

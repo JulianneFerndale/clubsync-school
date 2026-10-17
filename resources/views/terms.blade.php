@@ -47,6 +47,7 @@
         <section class="space-y-2">
             <h2 class="font-bold text-green-900 text-base">5. Data Privacy</h2>
             <p>ClubSync collects your name, institutional email, EDP number, department, course, and mobile number to facilitate club membership and notifications. This data is used solely within the platform and is not shared with third parties outside of SCC administration. By registering, you consent to this collection and use.</p>
+            <p>To confirm that you are an enrolled SCC student, registration asks for your Certificate of Enrollment or the front of your school ID. It is read by an automated service (Google Gemini) only to check that its full name, EDP number and course match what you registered with. A document that passes is not kept. If the check cannot decide, the document is stored encrypted for the Student Affairs Office to review, and deleted as soon as they have decided. Only the outcome (which document, when, and who decided) is kept.</p>
         </section>
 
         <section class="space-y-2">
@@ -56,7 +57,7 @@
 
         <section class="space-y-2">
             <h2 class="font-bold text-green-900 text-base">7. Club Membership</h2>
-            <p>Joining a club through ClubSync is subject to approval by club officers. Membership may be revoked at any time by club officers or DSA. ClubSync records are supplementary to official club records maintained by the DSA office.</p>
+            <p>Once your enrollment is verified, you become a member of the academic club for your course automatically. Joining any other club through ClubSync is subject to approval by its officers and adviser. Membership may be revoked at any time by club officers or DSA. ClubSync records are supplementary to official club records maintained by the DSA office.</p>
         </section>
 
         <section class="space-y-2">

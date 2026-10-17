@@ -73,16 +73,6 @@
         <p class="text-sm text-gray-700 leading-relaxed">{{ $event->purpose }}</p>
     </div>
 
-    {{-- Post-event report (if available) --}}
-    @if($event->post_report_status)
-    <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-        <div class="flex items-center justify-between">
-            <p class="text-sm font-semibold text-gray-700">Post-Activity Report</p>
-            <x-status-badge :status="$event->post_report_status" />
-        </div>
-    </div>
-    @endif
-
     {{-- DSA approval (non-internal activities) --}}
     @if($event->activity_type !== 'internal_meeting')
     <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-2">
@@ -97,42 +87,6 @@
             <a href="{{ route('officer.activities.letter', $event) }}" class="text-xs text-[#07873e] font-semibold underline">
                 View uploaded approval letter
             </a>
-        @endif
-    </div>
-    @endif
-
-    {{-- CHED report (ACLE / community involvement activities) --}}
-    @if($event->chedReport)
-    <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-3">
-        <div class="flex items-center justify-between">
-            <p class="text-sm font-semibold text-gray-700">CHED Report</p>
-            <x-status-badge :status="$event->chedReport->is_finalized ? 'approved' : 'pending'" />
-        </div>
-
-        <div class="flex items-center gap-3 text-xs">
-            <a href="{{ route('officer.reports.pdf', $event->chedReport) }}" class="text-[#07873e] font-semibold underline">Download PDF</a>
-            <a href="{{ route('officer.reports.xlsx', $event->chedReport) }}" class="text-[#07873e] font-semibold underline">Download XLSX</a>
-        </div>
-
-        @if($event->chedReport->is_finalized)
-            <p class="text-xs text-gray-500">{{ $event->chedReport->narrative ?? 'No narrative provided.' }}</p>
-        @else
-            <form method="POST" action="{{ route('officer.reports.update', $event->chedReport) }}" class="space-y-2">
-                @csrf
-                @method('PATCH')
-                <textarea name="narrative" rows="3" placeholder="Add a narrative summary before finalizing..."
-                          class="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#07873e]/30">{{ old('narrative', $event->chedReport->narrative) }}</textarea>
-                <button type="submit" class="border border-gray-300 text-gray-600 text-xs font-semibold rounded-lg px-3 py-1.5 hover:bg-gray-50 transition-colors">
-                    Save Narrative
-                </button>
-            </form>
-            <form method="POST" action="{{ route('officer.reports.finalize', $event->chedReport) }}"
-                  onsubmit="return confirm('Finalize this report? It will be sent to the DSA and can no longer be edited.')">
-                @csrf
-                <button type="submit" class="bg-[#07873e] text-white text-xs font-semibold rounded-lg px-3 py-1.5 hover:opacity-90 transition-opacity">
-                    Finalize &amp; Send to DSA
-                </button>
-            </form>
         @endif
     </div>
     @endif
@@ -200,6 +154,168 @@
             This activity has been completed.
         </div>
     @endif
+
+    {{-- Photos and records for the semester-end report documents --}}
+    @php($categories = \App\Models\ActivityPhoto::CATEGORIES)
+    <div id="report-photos" class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-4 scroll-mt-4">
+        <div>
+            <p class="text-sm font-semibold text-gray-700">Semester Report Photos</p>
+            <p class="text-xs text-gray-500 mt-1 leading-relaxed">
+                Attach photos once the activity or meeting is over. They are filed in the club's reporting folder and pasted into the
+                semester-end documents the AI drafts for the DSA: the accomplishment report, minutes of meetings, financial report,
+                property inventory, and communication letters &amp; publication materials.
+            </p>
+        </div>
+
+        @if($reportLocked)
+            <div class="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-xs text-gray-600">
+                The semester narrative report covering this activity has been submitted to the DSA, so these records are now fixed.
+            </div>
+        @endif
+
+        @error('photos')
+            <p class="text-red-500 text-xs">{{ $message }}</p>
+        @enderror
+        @error('photos.*')
+            <p class="text-red-500 text-xs">{{ $message }}</p>
+        @enderror
+
+        {{-- Budget released: what the receipts are liquidated against in the financial report --}}
+        <form method="POST" action="{{ route('officer.activities.budget', $event) }}" class="flex flex-wrap items-end gap-2">
+            @csrf
+            @method('PATCH')
+            <div class="flex-1 min-w-[10rem]">
+                <label for="budget_amount" class="text-xs text-gray-500 font-medium block mb-1">Budget released (PHP)</label>
+                <input type="number" id="budget_amount" name="budget_amount" step="0.01" min="0"
+                       value="{{ old('budget_amount', $event->budget_amount) }}" placeholder="None" @disabled($reportLocked)
+                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#07873e]/30">
+            </div>
+            @unless($reportLocked)
+                <button type="submit" class="border-2 border-[#07873e] text-[#07873e] font-semibold text-xs rounded-lg px-4 py-2 hover:bg-[#07873e]/5">Save budget</button>
+            @endunless
+            @error('budget_amount')
+                <p class="text-red-500 text-xs w-full">{{ $message }}</p>
+            @enderror
+        </form>
+
+        {{-- What is attached so far, by the report section it goes into --}}
+        @forelse($photosByCategory as $category => $photos)
+            <div>
+                <p class="text-xs font-semibold text-gray-700">
+                    {{ \App\Models\ActivityPhoto::categoryLabel($category) }}
+                    <span class="font-normal text-gray-400">· {{ $categories[$category]['printed'] ?? '' }}</span>
+                </p>
+                <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mt-2">
+                    @foreach($photos as $photo)
+                        <figure class="border border-gray-100 rounded-lg overflow-hidden bg-gray-50">
+                            <a href="{{ route('officer.activities.photos.show', [$event, $photo]) }}" target="_blank" rel="noopener">
+                                <img src="{{ route('officer.activities.photos.show', [$event, $photo]) }}" alt="{{ $photo->caption ?: $photo->category_label }}"
+                                     loading="lazy" class="w-full h-24 object-cover">
+                            </a>
+                            <figcaption class="px-2 py-1.5 space-y-0.5">
+                                @if($photo->caption)
+                                    <p class="text-[11px] text-gray-700 leading-snug">{{ $photo->caption }}</p>
+                                @endif
+                                @if($photo->category === 'receipt')
+                                    <p class="text-[11px] font-semibold text-gray-800">PHP {{ number_format((float) $photo->amount, 2) }}@if($photo->reference_number) · No. {{ $photo->reference_number }}@endif</p>
+                                @elseif($photo->category === 'property')
+                                    <p class="text-[11px] font-semibold text-gray-800">Qty {{ $photo->quantity }}@if($photo->remarks) · {{ $photo->remarks }}@endif</p>
+                                @endif
+                                <p class="text-[10px] text-gray-400">{{ $photo->uploader?->name ?? 'An officer' }} · {{ $photo->created_at->format('M j') }}</p>
+                                @unless($reportLocked)
+                                    <form method="POST" action="{{ route('officer.activities.photos.destroy', [$event, $photo]) }}"
+                                          onsubmit="return confirm('Remove this from the semester report?')">
+                                        @csrf
+                                        @method('DELETE')
+                                        <button type="submit" class="text-[11px] text-red-500 hover:underline">Remove</button>
+                                    </form>
+                                @endunless
+                            </figcaption>
+                        </figure>
+                    @endforeach
+                </div>
+            </div>
+        @empty
+            <p class="text-xs text-gray-400">Nothing attached yet.</p>
+        @endforelse
+
+        {{-- Attach more --}}
+        @unless($reportLocked)
+            <form method="POST" action="{{ route('officer.activities.photos.store', $event) }}" enctype="multipart/form-data"
+                  class="border-t border-gray-100 pt-4 space-y-3"
+                  x-data="{ category: @js(old('category', 'documentation')), meta: @js(collect($categories)->map(fn ($c) => ['hint' => $c['hint'], 'multiple' => $c['multiple']])) }">
+                @csrf
+                <div>
+                    <label for="photo_category" class="text-xs text-gray-500 font-medium block mb-1">What are you attaching?</label>
+                    <select id="photo_category" name="category" x-model="category"
+                            class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#07873e]/30">
+                        @foreach($categories as $key => $category)
+                            <option value="{{ $key }}" @selected(old('category', 'documentation') === $key)>{{ $category['label'] }}</option>
+                        @endforeach
+                    </select>
+                    <p class="text-[11px] text-gray-400 mt-1" x-text="meta[category]?.hint"></p>
+                    @error('category')
+                        <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
+                    @enderror
+                </div>
+
+                <div>
+                    <label for="photo_files" class="text-xs text-gray-500 font-medium block mb-1">Photo(s)</label>
+                    <input type="file" id="photo_files" name="photos[]" accept="image/jpeg,image/png,image/webp" multiple required
+                           x-bind:multiple="meta[category]?.multiple"
+                           class="block w-full text-xs text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-[#07873e]/10 file:px-3 file:py-2 file:text-[#07873e] file:font-semibold">
+                    <p class="text-[11px] text-gray-400 mt-1">JPG, PNG or WebP, up to 8 MB each.</p>
+                </div>
+
+                <div>
+                    <label for="photo_caption" class="text-xs text-gray-500 font-medium block mb-1"
+                           x-text="category === 'receipt' ? 'Item / description' : (category === 'property' ? 'Property' : 'Caption (optional)')">Caption (optional)</label>
+                    <input type="text" id="photo_caption" name="caption" maxlength="255" value="{{ old('caption') }}"
+                           class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#07873e]/30">
+                    @error('caption')
+                        <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
+                    @enderror
+                </div>
+
+                <div class="grid grid-cols-2 gap-2" x-show="category === 'receipt'" style="display: none">
+                    <div>
+                        <label for="photo_amount" class="text-xs text-gray-500 font-medium block mb-1">Amount (PHP)</label>
+                        <input type="number" id="photo_amount" name="amount" step="0.01" min="0.01" value="{{ old('amount') }}"
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#07873e]/30">
+                        @error('amount')
+                            <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
+                        @enderror
+                    </div>
+                    <div>
+                        <label for="photo_reference" class="text-xs text-gray-500 font-medium block mb-1">Receipt no. (optional)</label>
+                        <input type="text" id="photo_reference" name="reference_number" maxlength="60" value="{{ old('reference_number') }}"
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#07873e]/30">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-2" x-show="category === 'property'" style="display: none">
+                    <div>
+                        <label for="photo_quantity" class="text-xs text-gray-500 font-medium block mb-1">Quantity</label>
+                        <input type="number" id="photo_quantity" name="quantity" min="1" step="1" value="{{ old('quantity') }}"
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#07873e]/30">
+                        @error('quantity')
+                            <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
+                        @enderror
+                    </div>
+                    <div>
+                        <label for="photo_remarks" class="text-xs text-gray-500 font-medium block mb-1">Condition / remarks</label>
+                        <input type="text" id="photo_remarks" name="remarks" maxlength="255" value="{{ old('remarks') }}" placeholder="e.g. Functioning"
+                               class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#07873e]/30">
+                    </div>
+                </div>
+
+                <button type="submit"
+                        class="w-full bg-[#07873e] text-[#F9A825] font-semibold text-sm rounded-xl px-5 py-3 hover:opacity-90 transition-opacity">
+                    Attach to Semester Report
+                </button>
+            </form>
+        @endunless
+    </div>
 
 </div>
 @endsection

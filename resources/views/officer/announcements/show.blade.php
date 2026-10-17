@@ -24,11 +24,6 @@
 
 <div class="px-4 py-5 space-y-4">
 
-    @if(session('success'))
-        <div class="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-green-700 text-sm">
-            {{ session('success') }}
-        </div>
-    @endif
 
     {{-- Adviser notes, from before officers published their own announcements --}}
     @if($announcement->adviser_notes && in_array($announcement->status, ['revision_required', 'rejected']))

@@ -3,8 +3,10 @@
 namespace App\Providers;
 
 use App\Database\ResilientPostgresConnector;
+use Illuminate\Foundation\Console\ServeCommand;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Validation\Rules\Password;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -34,5 +36,20 @@ class AppServiceProvider extends ServiceProvider
         Http::globalOptions([
             'connect_timeout' => (int) env('HTTP_CONNECT_TIMEOUT', 5),
         ]);
+
+        // POLICY.md §Authentication: at least 8 characters, with an uppercase letter, a
+        // lowercase letter and a number. Registration and password change both use
+        // Password::defaults(), so the two can never ask for different things.
+        Password::defaults(fn () => Password::min(8)->mixedCase()->numbers());
+
+        // `php artisan serve` gives the server it starts only an allowlist of environment
+        // variables. On Windows the list leaves out TEMP and TMP, so PHP has nowhere to
+        // put an upload: every file upload fails with "unable to create a temporary
+        // file" before the app sees it (the proof-of-enrollment step, profile photos).
+        if (PHP_OS_FAMILY === 'Windows' && $this->app->runningInConsole()) {
+            ServeCommand::$passthroughVariables = array_values(array_unique(
+                array_merge(ServeCommand::$passthroughVariables, ['TEMP', 'TMP'])
+            ));
+        }
     }
 }

@@ -47,6 +47,8 @@ services:
       # ── Sessions / cache / queue (all backed by the Supabase DB) ─────────────
       - key: SESSION_DRIVER
         value: database
+      - key: SESSION_LIFETIME
+        value: "30"              # POLICY.md: 30 minutes of inactivity
       - key: CACHE_STORE
         value: database
       - key: QUEUE_CONNECTION
@@ -60,6 +62,12 @@ services:
       - key: FIREBASE_PROJECT_ID
         sync: false
       - key: FIREBASE_DATABASE_URL
+        sync: false
+
+      # ── Google sign-in (SCC Workspace accounts; button hidden until set) ────
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
         sync: false
 
       # ── Gemini (AI announcement drafting) ───────────────────────────────────

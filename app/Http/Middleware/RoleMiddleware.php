@@ -20,7 +20,11 @@ class RoleMiddleware
         $allowed = array_map(fn ($r) => $r === 'officer' ? ['president', 'treasurer', 'mmo'] : [$r], $roles);
         $allowed = array_merge(...$allowed);
 
-        if (! in_array($userRole, $allowed, true)) {
+        // 'admin' is not a role but the is_admin flag, which sits on top of any role
+        // (the seeded administrator's role is 'member').
+        $adminAllowed = in_array('admin', $roles, true) && auth_is_admin();
+
+        if (! $adminAllowed && ! in_array($userRole, $allowed, true)) {
             abort(403);
         }
 

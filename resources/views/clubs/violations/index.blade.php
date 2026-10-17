@@ -12,16 +12,6 @@
 
 <div class="px-4 py-5 space-y-5">
 
-    @if(session('success'))
-        <div class="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-green-700 text-sm">
-            {{ session('success') }}
-        </div>
-    @endif
-    @if($errors->any())
-        <div class="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
-            {{ $errors->first() }}
-        </div>
-    @endif
 
     @if(! $club)
         <p class="text-sm text-gray-400 text-center py-8">You are not associated with any club.</p>

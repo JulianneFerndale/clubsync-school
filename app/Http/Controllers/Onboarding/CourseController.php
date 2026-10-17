@@ -82,12 +82,7 @@ class CourseController extends Controller
 
         session(['course_selected' => true]);
 
-        $message = $clubs->isEmpty()
-            ? 'Course saved. No academic club is mapped to ' . $course->name
-                . ' yet, so the Student Affairs Office has been asked to review your club assignment.'
-            : 'Course saved. Your application to ' . $clubs->pluck('name')->implode(', ')
-                . ' is now waiting for the club officers and your adviser to approve it.';
-
-        return $this->session->redirectByRole($user->role)->with('success', $message);
+        return $this->session->redirectByRole($user->role)
+            ->with('success', 'Course saved. ' . $this->enrollment->summary($clubs, $course));
     }
 }

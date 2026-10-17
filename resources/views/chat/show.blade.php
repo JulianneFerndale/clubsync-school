@@ -60,12 +60,6 @@
             </details>
         </div>
 
-        @if(session('success'))
-            <div class="bg-green-50 border-b border-green-100 text-green-800 text-sm px-4 py-2">{{ session('success') }}</div>
-        @endif
-        @if($errors->any())
-            <div class="bg-red-50 border-b border-red-100 text-red-800 text-sm px-4 py-2">{{ $errors->first() }}</div>
-        @endif
 
         {{-- Messages --}}
         <div id="chat-scroller" class="flex-1 overflow-y-auto bg-gray-50 px-3 sm:px-4 py-4">

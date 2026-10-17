@@ -24,6 +24,14 @@ class PasswordController extends Controller
     {
         $user = $request->user();
 
+        // Registered with Google and never set a password: there is no current password
+        // to confirm, so nothing here can be changed.
+        if ($user->signsInWithGoogleOnly()) {
+            return back()->withErrors([
+                'password' => 'Your account signs in with your SCC Google account, so it has no ClubSync password to change.',
+            ]);
+        }
+
         // Cooldown is checked before validation so a user inside the window always
         // gets the date they can next change it, not a complexity complaint.
         if (! $user->canChangePassword()) {
@@ -36,7 +44,7 @@ class PasswordController extends Controller
 
         $validated = $request->validate([
             'current_password' => ['required', 'string'],
-            'password'         => ['required', 'confirmed', Password::min(8)->mixedCase()->numbers()->symbols()],
+            'password'         => ['required', 'confirmed', Password::defaults()],
         ]);
 
         // Re-authenticate: proves the person at the keyboard owns the account (a

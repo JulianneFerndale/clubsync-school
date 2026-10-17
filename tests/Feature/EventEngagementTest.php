@@ -26,7 +26,7 @@ uses(RefreshDatabase::class);
  *   1. Officer creates + schedules an activity with complete details
  *   2. Overlapping venue/time booking is rejected
  *   3. New/updated activity is broadcast in real time via Laravel Reverb
- *   4. Churn Risk Engine scores members and is reachable only by Officer + DSA
+ *   4. Churn Risk Engine scores members and is reachable only by club Officers
  *   5. AI-assisted activity proposal checks venue availability before submission
  */
 
@@ -105,7 +105,7 @@ function evPayload(array $overrides = []): array
         'date'                  => now()->addDays(10)->toDateString(),
         'time_start'            => '09:00',
         'time_end'              => '11:00',
-        'venue'                 => 'SCC Gymnasium',
+        'venue'                 => 'AVR',
         'purpose'               => 'Orient members on the semester calendar.',
         'expected_participants' => 80,
         'activity_type'         => 'internal_meeting',
@@ -176,7 +176,7 @@ it('P1: lets an Officer create and schedule an activity with complete details', 
 
     expect($activity)->not->toBeNull()
         ->and($activity->title)->toBe('General Assembly')
-        ->and($activity->venue)->toBe('SCC Gymnasium')
+        ->and($activity->venue)->toBe('AVR')
         ->and($activity->date->toDateString())->toBe(now()->addDays(10)->toDateString())
         ->and($activity->time_start)->toStartWith('09:00')
         ->and($activity->time_end)->toStartWith('11:00')
@@ -208,7 +208,7 @@ it('P2: rejects a booking that overlaps an existing activity in the same venue a
 
     // Club A already holds the gym 09:00–11:00.
     [, $clubA] = evOfficer();
-    evBooking($clubA, $date, '09:00', '11:00', 'SCC Gymnasium', 'Leadership Seminar');
+    evBooking($clubA, $date, '09:00', '11:00', 'AVR', 'Leadership Seminar');
 
     // Club B tries to take the same gym 10:00–12:00 — a real overlap.
     [$officerB] = evOfficer();
@@ -220,7 +220,7 @@ it('P2: rejects a booking that overlaps an existing activity in the same venue a
             'date'       => $date,
             'time_start' => '10:00',
             'time_end'   => '12:00',
-            'venue'      => 'SCC Gymnasium',
+            'venue'      => 'AVR',
         ]));
 
     $response->assertSessionHasErrors('venue');
@@ -233,7 +233,7 @@ it('P2: does not leak the other club\'s activity title in the conflict message',
     $date = now()->addDays(14)->toDateString();
 
     [, $clubA] = evOfficer();
-    evBooking($clubA, $date, '09:00', '11:00', 'SCC Gymnasium', 'Confidential Club Retreat');
+    evBooking($clubA, $date, '09:00', '11:00', 'AVR', 'Confidential Club Retreat');
 
     [$officerB] = evOfficer();
 
@@ -241,7 +241,7 @@ it('P2: does not leak the other club\'s activity title in the conflict message',
         ->from(route('officer.activities.create'))
         ->post(route('officer.activities.store'), evPayload([
             'title' => 'Sportsfest Briefing', 'date' => $date,
-            'time_start' => '10:00', 'time_end' => '12:00', 'venue' => 'SCC Gymnasium',
+            'time_start' => '10:00', 'time_end' => '12:00', 'venue' => 'AVR',
         ]));
 
     $message = evVenueError($response);
@@ -255,13 +255,13 @@ it('P2: names the activity when the clash is with the officer\'s own club', func
     $date = now()->addDays(14)->toDateString();
 
     [$officer, $club] = evOfficer();
-    evBooking($club, $date, '09:00', '11:00', 'SCC Gymnasium', 'Our Own Seminar');
+    evBooking($club, $date, '09:00', '11:00', 'AVR', 'Our Own Seminar');
 
     $response = $this->withSession(evSession($officer))
         ->from(route('officer.activities.create'))
         ->post(route('officer.activities.store'), evPayload([
             'title' => 'Sportsfest Briefing', 'date' => $date,
-            'time_start' => '10:00', 'time_end' => '12:00', 'venue' => 'SCC Gymnasium',
+            'time_start' => '10:00', 'time_end' => '12:00', 'venue' => 'AVR',
         ]));
 
     expect(evVenueError($response))->toContain('Our Own Seminar');
@@ -271,7 +271,7 @@ it('P2: allows a back-to-back booking in the same venue that does not overlap', 
     $date = now()->addDays(14)->toDateString();
 
     [, $clubA] = evOfficer();
-    evBooking($clubA, $date, '09:00', '11:00', 'SCC Gymnasium', 'Leadership Seminar');
+    evBooking($clubA, $date, '09:00', '11:00', 'AVR', 'Leadership Seminar');
 
     [$officerB] = evOfficer();
 
@@ -281,7 +281,7 @@ it('P2: allows a back-to-back booking in the same venue that does not overlap', 
             'date'       => $date,
             'time_start' => '11:00',
             'time_end'   => '13:00',
-            'venue'      => 'SCC Gymnasium',
+            'venue'      => 'AVR',
         ]));
 
     $response->assertSessionHasNoErrors();
@@ -294,14 +294,14 @@ it('P2: allows a booking that ends exactly when an existing one starts', functio
     $date = now()->addDays(14)->toDateString();
 
     [, $clubA] = evOfficer();
-    evBooking($clubA, $date, '09:00', '11:00', 'SCC Gymnasium', 'Leadership Seminar');
+    evBooking($clubA, $date, '09:00', '11:00', 'AVR', 'Leadership Seminar');
 
     [$officerB] = evOfficer();
 
     $this->withSession(evSession($officerB))
         ->post(route('officer.activities.store'), evPayload([
             'title' => 'Early Practice', 'date' => $date,
-            'time_start' => '07:00', 'time_end' => '09:00', 'venue' => 'SCC Gymnasium',
+            'time_start' => '07:00', 'time_end' => '09:00', 'venue' => 'AVR',
         ]))->assertSessionHasNoErrors();
 
     expect(ClubActivity::where('title', 'Early Practice')->exists())->toBeTrue();
@@ -311,7 +311,7 @@ it('P2: compares correctly when stored times use the H:i:s shape PostgreSQL writ
     $date = now()->addDays(14)->toDateString();
 
     [, $clubA] = evOfficer();
-    evBooking($clubA, $date, '09:00:00', '11:00:00', 'SCC Gymnasium', 'Leadership Seminar');
+    evBooking($clubA, $date, '09:00:00', '11:00:00', 'AVR', 'Leadership Seminar');
 
     [$officerB] = evOfficer();
 
@@ -320,14 +320,14 @@ it('P2: compares correctly when stored times use the H:i:s shape PostgreSQL writ
         ->from(route('officer.activities.create'))
         ->post(route('officer.activities.store'), evPayload([
             'title' => 'Overlapping', 'date' => $date,
-            'time_start' => '10:00', 'time_end' => '12:00', 'venue' => 'SCC Gymnasium',
+            'time_start' => '10:00', 'time_end' => '12:00', 'venue' => 'AVR',
         ]))->assertSessionHasErrors('venue');
 
     // Exactly back-to-back — must be allowed.
     $this->withSession(evSession($officerB))
         ->post(route('officer.activities.store'), evPayload([
             'title' => 'Back To Back', 'date' => $date,
-            'time_start' => '11:00', 'time_end' => '13:00', 'venue' => 'SCC Gymnasium',
+            'time_start' => '11:00', 'time_end' => '13:00', 'venue' => 'AVR',
         ]))->assertSessionHasNoErrors();
 
     expect(ClubActivity::where('title', 'Overlapping')->exists())->toBeFalse()
@@ -338,14 +338,14 @@ it('P2: allows the same slot in a different venue', function () {
     $date = now()->addDays(14)->toDateString();
 
     [, $clubA] = evOfficer();
-    evBooking($clubA, $date, '09:00', '11:00', 'SCC Gymnasium', 'Leadership Seminar');
+    evBooking($clubA, $date, '09:00', '11:00', 'AVR', 'Leadership Seminar');
 
     [$officerB] = evOfficer();
 
     $this->withSession(evSession($officerB))
         ->post(route('officer.activities.store'), evPayload([
             'title' => 'Parallel Session', 'date' => $date,
-            'time_start' => '09:00', 'time_end' => '11:00', 'venue' => 'Function Hall',
+            'time_start' => '09:00', 'time_end' => '11:00', 'venue' => 'Library',
         ]))->assertSessionHasNoErrors();
 
     expect(ClubActivity::where('title', 'Parallel Session')->exists())->toBeTrue();
@@ -353,43 +353,116 @@ it('P2: allows the same slot in a different venue', function () {
 
 it('P2: allows the same venue and slot on a different date', function () {
     [, $clubA] = evOfficer();
-    evBooking($clubA, now()->addDays(14)->toDateString(), '09:00', '11:00', 'SCC Gymnasium', 'Leadership Seminar');
+    evBooking($clubA, now()->addDays(14)->toDateString(), '09:00', '11:00', 'AVR', 'Leadership Seminar');
 
     [$officerB] = evOfficer();
 
     $this->withSession(evSession($officerB))
         ->post(route('officer.activities.store'), evPayload([
             'title' => 'Next Day Session', 'date' => now()->addDays(15)->toDateString(),
-            'time_start' => '09:00', 'time_end' => '11:00', 'venue' => 'SCC Gymnasium',
+            'time_start' => '09:00', 'time_end' => '11:00', 'venue' => 'AVR',
         ]))->assertSessionHasNoErrors();
 
     expect(ClubActivity::where('title', 'Next Day Session')->exists())->toBeTrue();
 });
 
-it('P2: treats the "Others" venue as non-exclusive', function () {
-    // "Others" is the catch-all on the venue list — two clubs picking it are not
-    // necessarily in the same room, so it must never block a booking.
+it('P2: offers exactly the main-campus room list', function () {
+    expect(ClubActivity::VENUES)->toHaveCount(40)
+        ->toContain('AVR', 'EB 4-5', 'Moot Court', 'JD 2', 'PC 2-6', 'PC Lab C', 'SN 3-2', 'ST 1-2', 'Library', 'YDC')
+        ->not->toContain('Others')
+        ->not->toContain('SCC Gymnasium')
+        ->and(array_unique(ClubActivity::VENUES))->toHaveCount(40);
+
+    [$officer] = evOfficer();
+
+    $this->withSession(evSession($officer))
+        ->get(route('officer.activities.create'))
+        ->assertOk()
+        ->assertSee('<option value="PC Lab B"', false)
+        ->assertSee('<option value="YDC"', false)
+        ->assertDontSee('<option value="Others"', false)
+        ->assertSee('Main campus rooms only.');
+});
+
+it('P2: refuses a venue that is not a main-campus room', function (string $venue) {
+    [$officer] = evOfficer();
+
+    $this->withSession(evSession($officer))
+        ->post(route('officer.activities.store'), evPayload([
+            'title' => 'Off-list Booking', 'venue' => $venue,
+        ]))->assertSessionHasErrors(['venue' => 'Choose a room from the main campus list.']);
+
+    expect(ClubActivity::where('title', 'Off-list Booking')->exists())->toBeFalse();
+})->with([
+    'the retired catch-all'  => ['Others'],
+    'a retired venue'        => ['SCC Gymnasium'],
+    'free text'              => ['Barangay Hall, Tiguma'],
+]);
+
+it('P2: blocks a second club from a newly listed room at an overlapping time', function (string $room) {
     $date = now()->addDays(14)->toDateString();
 
     [, $clubA] = evOfficer();
-    evBooking($clubA, $date, '09:00', '11:00', 'Others', 'Off-campus Outreach');
+    evBooking($clubA, $date, '09:00', '11:00', $room, 'Room Holder');
 
     [$officerB] = evOfficer();
 
     $this->withSession(evSession($officerB))
         ->post(route('officer.activities.store'), evPayload([
-            'title' => 'Different Offsite', 'date' => $date,
-            'time_start' => '09:00', 'time_end' => '11:00', 'venue' => 'Others',
+            'title' => 'Room Clash', 'date' => $date,
+            'time_start' => '10:00', 'time_end' => '12:00', 'venue' => $room,
+        ]))->assertSessionHasErrors('venue');
+
+    // The room next door is still free for the same slot.
+    $this->withSession(evSession($officerB))
+        ->post(route('officer.activities.store'), evPayload([
+            'title' => 'Room Next Door', 'date' => $date,
+            'time_start' => '10:00', 'time_end' => '12:00', 'venue' => 'Library',
         ]))->assertSessionHasNoErrors();
 
-    expect(ClubActivity::where('title', 'Different Offsite')->exists())->toBeTrue();
+    expect(ClubActivity::where('title', 'Room Clash')->exists())->toBeFalse()
+        ->and(ClubActivity::where('title', 'Room Next Door')->exists())->toBeTrue();
+})->with(['EB 2-1', 'PC Lab A', 'SN 3-2', 'YDC']);
+
+it('P2: an activity booked under a retired venue can still be edited without moving it', function () {
+    [$officer, $club] = evOfficer();
+    $old = evBooking($club, now()->addDays(14)->toDateString(), '09:00', '11:00', 'SCC Gymnasium', 'Legacy Booking', $officer);
+
+    $this->withSession(evSession($officer))
+        ->get(route('officer.activities.edit', $old))
+        ->assertOk()
+        ->assertSee('SCC Gymnasium (no longer on the room list)');
+
+    $this->withSession(evSession($officer))
+        ->patch(route('officer.activities.update', $old), evPayload([
+            'title' => 'Legacy Booking Renamed', 'date' => $old->date->toDateString(),
+            'time_start' => '09:00', 'time_end' => '11:00', 'venue' => 'SCC Gymnasium',
+        ]))->assertSessionHasNoErrors();
+
+    expect($old->fresh()->title)->toBe('Legacy Booking Renamed')
+        ->and($old->fresh()->venue)->toBe('SCC Gymnasium');
+
+    // …but it cannot be moved to a different venue that is off the list.
+    $this->withSession(evSession($officer))
+        ->patch(route('officer.activities.update', $old), evPayload([
+            'title' => 'Legacy Booking Renamed', 'date' => $old->date->toDateString(),
+            'time_start' => '09:00', 'time_end' => '11:00', 'venue' => 'Covered Court',
+        ]))->assertSessionHasErrors('venue');
+});
+
+it('P2: activities booked under the retired "Others" catch-all never clash with each other', function () {
+    $date = now()->addDays(14)->toDateString();
+    [, $clubA] = evOfficer();
+    evBooking($clubA, $date, '09:00', '11:00', 'Others', 'Off-campus Outreach');
+
+    expect(ClubActivity::findVenueConflict('Others', $date, '09:00', '11:00'))->toBeNull();
 });
 
 it('P2: a cancelled or DSA-rejected activity releases its venue slot', function (string $field, string $value) {
     $date = now()->addDays(14)->toDateString();
 
     [, $clubA] = evOfficer();
-    evBooking($clubA, $date, '09:00', '11:00', 'SCC Gymnasium', 'Dropped Booking')
+    evBooking($clubA, $date, '09:00', '11:00', 'AVR', 'Dropped Booking')
         ->update([$field => $value]);
 
     [$officerB] = evOfficer();
@@ -397,7 +470,7 @@ it('P2: a cancelled or DSA-rejected activity releases its venue slot', function 
     $this->withSession(evSession($officerB))
         ->post(route('officer.activities.store'), evPayload([
             'title' => 'Replacement Booking', 'date' => $date,
-            'time_start' => '09:00', 'time_end' => '11:00', 'venue' => 'SCC Gymnasium',
+            'time_start' => '09:00', 'time_end' => '11:00', 'venue' => 'AVR',
         ]))->assertSessionHasNoErrors();
 
     expect(ClubActivity::where('title', 'Replacement Booking')->exists())->toBeTrue();
@@ -410,20 +483,20 @@ it('P2: blocks an edit that moves an activity onto an occupied slot', function (
     $date = now()->addDays(14)->toDateString();
 
     [, $clubA] = evOfficer();
-    evBooking($clubA, $date, '09:00', '11:00', 'SCC Gymnasium', 'Leadership Seminar');
+    evBooking($clubA, $date, '09:00', '11:00', 'AVR', 'Leadership Seminar');
 
     [$officerB, $clubB] = evOfficer();
-    $mine = evBooking($clubB, $date, '14:00', '16:00', 'Function Hall', 'My Activity', $officerB);
+    $mine = evBooking($clubB, $date, '14:00', '16:00', 'Library', 'My Activity', $officerB);
 
     $this->withSession(evSession($officerB))
         ->from(route('officer.activities.edit', $mine))
         ->patch(route('officer.activities.update', $mine), evPayload([
             'title' => 'My Activity', 'date' => $date,
-            'time_start' => '10:00', 'time_end' => '12:00', 'venue' => 'SCC Gymnasium',
+            'time_start' => '10:00', 'time_end' => '12:00', 'venue' => 'AVR',
         ]))->assertSessionHasErrors('venue');
 
     $mine->refresh();
-    expect($mine->venue)->toBe('Function Hall')->and($mine->time_start)->toStartWith('14:00');
+    expect($mine->venue)->toBe('Library')->and($mine->time_start)->toStartWith('14:00');
 });
 
 it('P2: lets an activity keep its own slot when edited', function () {
@@ -432,12 +505,12 @@ it('P2: lets an activity keep its own slot when edited', function () {
     $date = now()->addDays(14)->toDateString();
 
     [$officer, $club] = evOfficer();
-    $mine = evBooking($club, $date, '09:00', '11:00', 'SCC Gymnasium', 'Original Title', $officer);
+    $mine = evBooking($club, $date, '09:00', '11:00', 'AVR', 'Original Title', $officer);
 
     $this->withSession(evSession($officer))
         ->patch(route('officer.activities.update', $mine), evPayload([
             'title' => 'Renamed Only', 'date' => $date,
-            'time_start' => '09:00', 'time_end' => '11:00', 'venue' => 'SCC Gymnasium',
+            'time_start' => '09:00', 'time_end' => '11:00', 'venue' => 'AVR',
         ]))->assertSessionHasNoErrors();
 
     expect($mine->fresh()->title)->toBe('Renamed Only');
@@ -486,12 +559,12 @@ it('P3: broadcasts a real-time event to club members when an activity is updated
 
     [$officer, $club, , $member] = evAudience();
 
-    $activity = evBooking($club, now()->addDays(9)->toDateString(), '09:00', '11:00', 'Main AV Room', 'Original Title');
+    $activity = evBooking($club, now()->addDays(9)->toDateString(), '09:00', '11:00', 'Moot Court', 'Original Title');
 
     $this->withSession(evSession($officer))
         ->patch(route('officer.activities.update', $activity), evPayload([
             'title' => 'Rescheduled Title',
-            'venue' => 'Function Hall',
+            'venue' => 'Library',
         ]));
 
     expect($activity->fresh()->title)->toBe('Rescheduled Title');
@@ -573,13 +646,13 @@ it('P3: does not broadcast an immaterial edit', function () {
 
     [$officer, $club, , $member] = evAudience();
 
-    $activity = evBooking($club, now()->addDays(9)->toDateString(), '09:00', '11:00', 'Main AV Room', 'Steady Title', $officer);
+    $activity = evBooking($club, now()->addDays(9)->toDateString(), '09:00', '11:00', 'Moot Court', 'Steady Title', $officer);
 
     $this->withSession(evSession($officer))
         ->patch(route('officer.activities.update', $activity), evPayload([
             'title'       => 'Steady Title',
             'date'        => now()->addDays(9)->toDateString(),
-            'venue'       => 'Main AV Room',
+            'venue'       => 'Moot Court',
             'description' => 'Completely reworded description, same schedule.',
         ]));
 
@@ -637,16 +710,16 @@ it('P3: the member broadcast carries the activity schedule and a link', function
     $this->withSession(evSession($officer))
         ->post(route('officer.activities.store'), evPayload([
             'title' => 'General Assembly',
-            'venue' => 'SCC Gymnasium',
+            'venue' => 'AVR',
         ]));
 
     $notification = ClubNotification::where('recipient_id', $member->id)->latest('id')->firstOrFail();
 
     expect($notification->title)->toContain($club->name)
         ->and($notification->body)->toContain('General Assembly')
-        ->and($notification->body)->toContain('SCC Gymnasium')
+        ->and($notification->body)->toContain('AVR')
         ->and($notification->body)->toContain('09:00–11:00')
-        ->and($notification->action_url)->toBe(route('member.clubs.show', $club));
+        ->and($notification->action_url)->toBe(route('member.clubs.show', $club, false));
 });
 
 it('P3: the broadcast event targets a private Reverb channel with a payload', function () {
@@ -685,7 +758,7 @@ it('P4: produces a risk score and tag for every active member from engagement da
     ]);
 
     // A completed activity for the club, so attendance is measurable.
-    $activity = evBooking($club, now()->subDays(7)->toDateString(), '09:00', '11:00', 'SCC Gymnasium', 'Past Assembly');
+    $activity = evBooking($club, now()->subDays(7)->toDateString(), '09:00', '11:00', 'AVR', 'Past Assembly');
     $activity->update(['status' => 'completed', 'completed_at' => now()->subDays(7)]);
 
     // Engaged member — attended, marked active.
@@ -743,21 +816,14 @@ it('P4: is reachable by an Officer', function () {
         ->assertSee('Churn Risk Engine', false);
 });
 
-it('P4: is reachable by DSA', function () {
-    $dsa = evUser('dsa');
-
-    $this->withSession(evSession($dsa))
-        ->get(route('churn-risk'))
-        ->assertOk();
-});
-
-it('P4: is forbidden to Members and Advisers', function (string $role) {
+it('P4: is forbidden to Members, Advisers and the DSA', function (string $role) {
     $user = evUser($role);
 
+    // The DSA follows clubs, not members, on dsa.club-performance (ClubPerformanceTest).
     $this->withSession(evSession($user))
         ->get(route('churn-risk'))
         ->assertForbidden();
-})->with(['member', 'adviser']);
+})->with(['member', 'adviser', 'dsa']);
 
 it('P4: forbids an Officer from reading another club risk data', function () {
     [$officer] = evOfficer();
@@ -837,7 +903,7 @@ it('A1: notifies the adviser that an activity is waiting', function () {
         ->and($notification->club_id)->toBe($club->id)
         ->and($notification->title)->toContain('review')
         ->and($notification->body)->toContain($activity->title)
-        ->and($notification->action_url)->toBe(route('adviser.activities.review'));
+        ->and($notification->action_url)->toBe(route('adviser.activities.review', [], false));
 });
 
 it('A1: tells the DSA instead when the club has no adviser', function () {
@@ -1005,7 +1071,7 @@ it('A4: sends an edited approved activity back to the adviser', function () {
         ->patch(route('officer.activities.update', $activity), evPayload([
             'title'         => 'ACLE Outreach',
             'activity_type' => 'acle',
-            'venue'         => 'Function Hall',
+            'venue'         => 'Library',
         ]));
 
     expect($activity->fresh()->approval_status)->toBe('pending_approval')
@@ -1095,7 +1161,7 @@ it('P1: lets an officer edit an activity that has already happened', function ()
     $this->travelTo(Carbon::parse('2026-10-15 14:00:00'));
 
     [$officer, $club] = evOfficer();
-    $past = evBooking($club, '2026-10-01', '09:00', '11:00', 'Main AV Room', 'Finished Assembly', $officer);
+    $past = evBooking($club, '2026-10-01', '09:00', '11:00', 'Moot Court', 'Finished Assembly', $officer);
 
     $this->withSession(evSession($officer))
         ->patch(route('officer.activities.update', $past), evPayload([
@@ -1103,7 +1169,7 @@ it('P1: lets an officer edit an activity that has already happened', function ()
             'date'       => '2026-10-01',
             'time_start' => '09:00',
             'time_end'   => '11:00',
-            'venue'      => 'Main AV Room',
+            'venue'      => 'Moot Court',
         ]))
         ->assertSessionHasNoErrors();
 
@@ -1132,7 +1198,7 @@ function evProposal(array $overrides = []): array
         'date'       => now()->addDays(21)->toDateString(),
         'time_start' => '14:00',
         'time_end'   => '15:00',
-        'venue'      => 'SCC Gymnasium',
+        'venue'      => 'AVR',
         'context'    => 'A sportsfest kickoff for the club.',
     ], $overrides);
 }
@@ -1191,7 +1257,7 @@ it('P5: the AI proposal reports a venue conflict before final submission', funct
     evFakeGemini();
 
     [, $clubA] = evOfficer();
-    evBooking($clubA, $date, '13:00', '16:00', 'SCC Gymnasium', 'Existing Gym Booking');
+    evBooking($clubA, $date, '13:00', '16:00', 'AVR', 'Existing Gym Booking');
 
     [$officerB] = evOfficer();
 
@@ -1225,7 +1291,7 @@ it('P5: withholds another club\'s activity title in the proposal conflict', func
     evFakeGemini();
 
     [, $clubA] = evOfficer();
-    evBooking($clubA, $date, '13:00', '16:00', 'SCC Gymnasium', 'Secret Retreat');
+    evBooking($clubA, $date, '13:00', '16:00', 'AVR', 'Secret Retreat');
 
     [$officerB] = evOfficer();
 
@@ -1242,8 +1308,8 @@ it('P5: suggests alternative venues that are free in the same slot', function ()
     evFakeGemini();
 
     [, $clubA] = evOfficer();
-    evBooking($clubA, $date, '13:00', '16:00', 'SCC Gymnasium', 'Existing Gym Booking');
-    evBooking($clubA, $date, '13:00', '16:00', 'Function Hall', 'Existing Hall Booking');
+    evBooking($clubA, $date, '13:00', '16:00', 'AVR', 'Existing Gym Booking');
+    evBooking($clubA, $date, '13:00', '16:00', 'Library', 'Existing Hall Booking');
 
     [$officerB] = evOfficer();
 
@@ -1252,10 +1318,10 @@ it('P5: suggests alternative venues that are free in the same slot', function ()
 
     $alternatives = $response->json('alternative_venues');
 
-    expect($alternatives)->toContain('Main AV Room')
-        ->and($alternatives)->toContain('Open Court')
-        ->and($alternatives)->not->toContain('SCC Gymnasium')
-        ->and($alternatives)->not->toContain('Function Hall')
+    expect($alternatives)->toContain('Moot Court')
+        ->and($alternatives)->toContain('YDC')
+        ->and($alternatives)->not->toContain('AVR')
+        ->and($alternatives)->not->toContain('Library')
         ->and($alternatives)->not->toContain('Others'); // non-exclusive, never suggested
 });
 
@@ -1403,7 +1469,7 @@ it('P5: still answers the availability question when Gemini is unavailable', fun
     $date = now()->addDays(21)->toDateString();
 
     [, $clubA] = evOfficer();
-    evBooking($clubA, $date, '13:00', '16:00', 'SCC Gymnasium', 'Existing Gym Booking');
+    evBooking($clubA, $date, '13:00', '16:00', 'AVR', 'Existing Gym Booking');
 
     [$officerB] = evOfficer();
 
@@ -1444,7 +1510,7 @@ it('P5: the submission gate is enforced server-side, not just advised', function
     evFakeGemini();
 
     [, $clubA] = evOfficer();
-    evBooking($clubA, $date, '13:00', '16:00', 'SCC Gymnasium', 'Existing Gym Booking');
+    evBooking($clubA, $date, '13:00', '16:00', 'AVR', 'Existing Gym Booking');
 
     [$officerB] = evOfficer();
 
@@ -1460,7 +1526,7 @@ it('P5: the submission gate is enforced server-side, not just advised', function
             'date'       => $date,
             'time_start' => '14:00',
             'time_end'   => '15:00',
-            'venue'      => 'SCC Gymnasium',
+            'venue'      => 'AVR',
         ]))->assertSessionHasErrors('venue');
 
     expect(ClubActivity::where('title', 'AI Drafted Activity')->exists())->toBeFalse();

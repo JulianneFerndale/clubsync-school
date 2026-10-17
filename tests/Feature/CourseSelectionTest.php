@@ -160,7 +160,7 @@ it('shows the course step with the colleges and their courses', function () {
         ->assertSee($course->name);
 });
 
-it('records the course and queues them for the mapped academic club', function () {
+it('records the course and makes them a member of the mapped academic club', function () {
     $course  = csCourse();
     $club    = Club::where('club_type', 'Academic')->firstOrFail();
     $student = csUser('member');
@@ -177,11 +177,12 @@ it('records the course and queues them for the mapped academic club', function (
         ->and($student->department_id)->toBe($course->department_id)
         ->and($student->pending_club_assignment)->toBeFalse();
 
-    // POLICY: queued, not enrolled — officers accept, then the adviser approves.
+    // POLICY: a member at once, as registration makes them — no officer or adviser step.
     $membership = ClubMember::where('user_id', $student->id)->where('club_id', $club->id)->first();
 
     expect($membership)->not->toBeNull()
-        ->and($membership->status)->toBe('pending');
+        ->and($membership->status)->toBe('active')
+        ->and($membership->registration_status)->toBe('approved');
 });
 
 it('stops holding them once the course is recorded', function () {

@@ -44,8 +44,9 @@ class AnnouncementController extends Controller
     {
         $club        = $this->officerClub();
         $aiAvailable = $this->gemini->isAvailable();
+        $aiReady     = $this->gemini->isReady();
 
-        return view('officer.announcements.create', compact('club', 'aiAvailable'));
+        return view('officer.announcements.create', compact('club', 'aiAvailable', 'aiReady'));
     }
 
     public function store(Request $request): RedirectResponse
@@ -108,8 +109,9 @@ class AnnouncementController extends Controller
         }
 
         $aiAvailable = $this->gemini->isAvailable();
+        $aiReady     = $this->gemini->isReady();
 
-        return view('officer.announcements.edit', compact('announcement', 'club', 'aiAvailable'));
+        return view('officer.announcements.edit', compact('announcement', 'club', 'aiAvailable', 'aiReady'));
     }
 
     public function update(Request $request, Announcement $announcement): RedirectResponse
@@ -179,7 +181,7 @@ class AnnouncementController extends Controller
         }
 
         if (! $this->gemini->isAvailable()) {
-            return response()->json(['error' => 'AI is not configured.'], 503);
+            return response()->json(['error' => 'AI is not configured. Start from a template below, or write it yourself.'], 503);
         }
 
         // The AI panel asks for a title OR a description of the topic, so accept either.
@@ -211,7 +213,11 @@ class AnnouncementController extends Controller
                 'title' => $title,
             ]);
 
-            return response()->json(['error' => 'AI generation failed. Please try again.'], 500);
+            // Down (just now, or still inside a remembered outage) is not worth retrying
+            // straight away; a one-off failure is. Either way the templates work.
+            return $this->gemini->isReady()
+                ? response()->json(['error' => 'The AI could not draft this. Try again, or start from a template below.'], 500)
+                : response()->json(['error' => 'The AI is unavailable right now. Start from a template below, or write it yourself.'], 503);
         }
 
         $content = trim($content);

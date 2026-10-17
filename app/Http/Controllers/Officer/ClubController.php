@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Officer;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\NotifyOfficersOfMembershipRequest;
 use App\Models\Announcement;
 use App\Models\Club;
 use App\Models\ClubActivity;
@@ -77,13 +78,15 @@ class ClubController extends Controller
             return back()->with('info', 'You have already requested to join this club.');
         }
 
-        ClubMember::create([
+        $membership = ClubMember::create([
             'club_id'     => $club->id,
             'user_id'     => auth_user_id(),
             'status'      => 'pending',
             'joined_at'   => now(),
             'date_joined' => now(),
         ]);
+
+        NotifyOfficersOfMembershipRequest::dispatchSync($membership->id);
 
         return back()->with('success', 'Your membership request has been submitted. Please wait for officer approval.');
     }

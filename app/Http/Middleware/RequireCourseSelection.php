@@ -72,6 +72,9 @@ class RequireCourseSelection
             ], 409);
         }
 
+        // Straight after signing in, the "Logged in" toast belongs on the page they end up on.
+        $request->session()->keep('toast');
+
         return redirect()->route('onboarding.course');
     }
 }

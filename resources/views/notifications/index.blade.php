@@ -5,7 +5,5 @@
 @section('live-refresh', 'any')
 
 @section('content')
-<div class="max-w-3xl mx-auto">
     @include('notifications.partials.feed')
-</div>
 @endsection

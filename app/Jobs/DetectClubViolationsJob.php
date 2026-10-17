@@ -24,7 +24,6 @@ class DetectClubViolationsJob implements ShouldQueue
 
         foreach ($clubs as $club) {
             $this->checkOverduePresenceUpdate($club);
-            $this->checkMissingChedReport($club);
             $this->checkOverdueActivityRequest($club);
             $this->checkUnupdatedOfficerInfo($club);
         }
@@ -75,21 +74,6 @@ class DetectClubViolationsJob implements ShouldQueue
 
         if (! $hasAnyStatus) {
             $this->raise($club, 'overdue_presence_update', "{$club->name} has not submitted any semestral presence update for {$semester->label}, which started on {$semester->start_date->format('M j, Y')}.");
-        }
-    }
-
-    private function checkMissingChedReport(Club $club): void
-    {
-        $overdueActivities = ClubActivity::where('club_id', $club->id)
-            ->whereIn('activity_type', ['acle', 'community_involvement'])
-            ->where('status', 'completed')
-            ->where('completed_at', '<=', now()->subDays(7))
-            ->whereDoesntHave('chedReport', fn ($q) => $q->where('is_finalized', true))
-            ->get();
-
-        if ($overdueActivities->isNotEmpty()) {
-            $titles = $overdueActivities->pluck('title')->implode(', ');
-            $this->raise($club, 'missing_ched_report', "{$club->name} has completed activities pending a finalized CHED report for more than 7 days: {$titles}.");
         }
     }
 

@@ -11,6 +11,17 @@
 
 <div class="px-4 py-5 space-y-5">
 
+    {{-- New students waiting on a person to check their proof of enrollment. --}}
+    @if($verificationsPending > 0)
+        <a href="{{ route('dsa.verifications.index') }}"
+           class="flex items-center justify-between gap-3 bg-[#F9A825]/10 border border-[#F9A825]/40 rounded-xl px-4 py-3.5 hover:bg-[#F9A825]/20 transition-colors">
+            <span class="text-sm font-semibold text-gray-800">
+                {{ $verificationsPending }} {{ Str::plural('student', $verificationsPending) }} waiting for enrollment verification
+            </span>
+            <span class="text-xs font-semibold text-[#07873e] flex-shrink-0">Review &rarr;</span>
+        </a>
+    @endif
+
     {{-- Officer turnover: who has not appointed this school year's officers yet.
          Nothing has been revoked from them — this is the list to chase. --}}
     @if($turnoverPending->isNotEmpty())
@@ -36,11 +47,6 @@
     @endif
 
     {{-- Session error --}}
-    @if(session('error'))
-        <div class="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
-            {{ session('error') }}
-        </div>
-    @endif
 
     {{-- Create new club (top action) --}}
     <a href="{{ route('dsa.clubs.create') }}"

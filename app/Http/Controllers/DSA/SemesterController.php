@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\DSA;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\DispatchSemesterNarrativeReportsJob;
 use App\Jobs\SyncToGoogleCalendars;
 use App\Models\AuditLog;
 use App\Models\GoogleCalendarEvent;
@@ -14,9 +15,8 @@ use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 
 /**
- * The academic calendar the semester-based features run on: CHED report semesters,
- * member presence, the compliance scan, and the end-of-semester narrative reports,
- * which are drafted the day after a semester's end date.
+ * The academic calendar the semester-based features run on: member presence, the compliance scan, and the end-of-semester narrative reports,
+ * which are drafted the day after a semester's end date, or earlier when the DSA concludes the semester.
  */
 class SemesterController extends Controller
 {
@@ -67,6 +67,31 @@ class SemesterController extends Controller
         SyncToGoogleCalendars::dispatch(GoogleCalendarEvent::SEMESTER, $semester->id);
 
         return redirect()->route('dsa.semesters.index')->with('success', "{$semester->label} updated.");
+    }
+
+    /**
+     * Draft the narrative reports now instead of waiting for the day after the end date.
+     *
+     * Every club that completed an activity in the semester and has no report yet gets one.
+     * The drafts go to each club's adviser for review, as the daily sweep's do; nothing
+     * reaches the DSA from here. The semester's dates are left as they are.
+     */
+    public function conclude(Semester $semester): RedirectResponse
+    {
+        if ($semester->start_date->gt(today())) {
+            return back()->withErrors(['semester' => "{$semester->label} has not started yet, so there is nothing to report."]);
+        }
+
+        $clubIds = DispatchSemesterNarrativeReportsJob::dispatchFor($semester);
+
+        AuditLog::record('semester.concluded', $semester, ['club_ids' => $clubIds]);
+
+        $count = count($clubIds);
+
+        return redirect()->route('dsa.semesters.index')->with('success', $count === 0
+            ? "Nothing to draft: every club with completed activities in {$semester->label} already has a report."
+            : "Drafting {$count} narrative " . str('report')->plural($count) . " for {$semester->label}. "
+                . "Each club's adviser is notified to review theirs before it is submitted to you.");
     }
 
     private function validated(Request $request, ?Semester $editing = null): array

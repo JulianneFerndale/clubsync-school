@@ -12,9 +12,16 @@ class ForgotPasswordController extends Controller
 {
     public function __construct(private AuthManager $auth) {}
 
-    public function show(): View
+    public function show(Request $request): View
     {
-        return view('auth.forgot-password');
+        // The login page carries the email already typed there over as ?email= so it can
+        // be prefilled here. Only accept a well-formed address; anything else opens the
+        // page with a blank field. Blade escapes it on output.
+        $email = $request->filled('email') && filter_var($request->query('email'), FILTER_VALIDATE_EMAIL)
+            ? $request->query('email')
+            : null;
+
+        return view('auth.forgot-password', compact('email'));
     }
 
     public function send(Request $request): RedirectResponse

@@ -43,6 +43,10 @@ return [
             ],
             'client_options' => [
                 // Guzzle client options: https://docs.guzzlephp.org/en/stable/request-options.html
+                // Reverb runs next to the app, so an answer takes milliseconds. Fail fast when
+                // it is not there rather than holding the request (see App\Support\LiveBroadcast).
+                'connect_timeout' => (float) env('REVERB_CONNECT_TIMEOUT', 1),
+                'timeout'         => (float) env('REVERB_TIMEOUT', 3),
             ],
         ],
 

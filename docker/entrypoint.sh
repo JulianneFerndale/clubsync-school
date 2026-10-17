@@ -13,6 +13,10 @@ sed "s/__PORT__/${PORT}/g" \
 # crash-loop. Disable by setting RUN_MIGRATIONS=false.
 if [ "${RUN_MIGRATIONS:-true}" = "true" ]; then
     php artisan migrate --force || echo "entrypoint: migrate skipped/failed, continuing"
+
+    # The DSA report templates live on local storage, which a redeploy wipes; this
+    # republishes any whose file is missing and leaves the rest alone.
+    php artisan db:seed --class=ReportTemplateSeeder --force || echo "entrypoint: template seed skipped/failed, continuing"
 fi
 
 # Cache config + views for production performance (best-effort).

@@ -19,12 +19,81 @@
 
 <div class="px-4 py-5 space-y-4">
 
-    {{-- Flash --}}
-    @if(session('success'))
-        <div class="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-green-700 text-sm">
-            {{ session('success') }}
+    {{-- Where the fee stands, when it is not simply being collected --}}
+    @if($fee->isCancelled())
+        <div class="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+            <p class="text-sm font-semibold text-gray-700">
+                Cancelled{{ $fee->status_changed_at ? ' on ' . $fee->status_changed_at->format('F j, Y') : '' }}
+            </p>
+            @if(filled($fee->status_reason))
+                <p class="text-xs text-gray-500 mt-0.5">{{ $fee->status_reason }}</p>
+            @endif
+            <p class="text-[11px] text-gray-400 mt-1.5">
+                Nobody owes this fee any more. Payments already recorded keep their receipts; those members were told to ask you about a refund.
+            </p>
+        </div>
+    @elseif($fee->isPostponed())
+        <div class="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
+            <p class="text-sm font-semibold text-amber-800">
+                Postponed{{ $fee->previous_due_date ? ' from ' . $fee->previous_due_date->format('F j, Y') : '' }} to {{ $fee->due_date->format('F j, Y') }}
+            </p>
+            @if(filled($fee->status_reason))
+                <p class="text-xs text-amber-700 mt-0.5">{{ $fee->status_reason }}</p>
+            @endif
         </div>
     @endif
+
+    {{-- Postpone or cancel. Members are notified either way. --}}
+    @unless($fee->isCancelled())
+        <div class="grid grid-cols-2 gap-2">
+            <details class="group col-span-2 sm:col-span-1 bg-white rounded-xl border border-gray-100 shadow-sm" @if($errors->has('due_date')) open @endif>
+                <summary class="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-[#07873e] flex items-center justify-between">
+                    Postpone fee
+                    <svg class="w-4 h-4 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
+                </summary>
+                <form method="POST" action="{{ route('officer.fees.postpone', $fee) }}" class="px-4 pb-4 space-y-3">
+                    @csrf
+                    @php $earliest = max($fee->due_date->copy()->addDay(), today()); @endphp
+                    <div>
+                        <label for="postpone-due" class="block text-xs font-semibold text-gray-600 mb-1">New due date</label>
+                        <input id="postpone-due" type="date" name="due_date" required min="{{ $earliest->toDateString() }}"
+                               value="{{ old('due_date') }}"
+                               class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#07873e] focus:ring-[#07873e]">
+                        @error('due_date') <p class="text-xs text-red-500 mt-1">{{ $message }}</p> @enderror
+                    </div>
+                    <div>
+                        <label for="postpone-reason" class="block text-xs font-semibold text-gray-600 mb-1">Reason <span class="font-normal text-gray-400">(optional, shown to members)</span></label>
+                        <input id="postpone-reason" type="text" name="reason" maxlength="500" value="{{ old('reason') }}"
+                               class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-[#07873e] focus:ring-[#07873e]">
+                    </div>
+                    <button type="submit" class="w-full bg-[#07873e] text-white text-sm font-semibold rounded-lg py-2 hover:opacity-90">
+                        Postpone and notify members
+                    </button>
+                </form>
+            </details>
+
+            <details class="group col-span-2 sm:col-span-1 bg-white rounded-xl border border-gray-100 shadow-sm">
+                <summary class="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-red-500 flex items-center justify-between">
+                    Cancel fee
+                    <svg class="w-4 h-4 transition-transform group-open:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m19.5 8.25-7.5 7.5-7.5-7.5"/></svg>
+                </summary>
+                <form method="POST" action="{{ route('officer.fees.cancel', $fee) }}" class="px-4 pb-4 space-y-3">
+                    @csrf
+                    <p class="text-xs text-gray-500">
+                        Nobody will owe this fee any more, and it cannot be undone. Members who already paid keep their receipts and are told to ask you about a refund.
+                    </p>
+                    <div>
+                        <label for="cancel-reason" class="block text-xs font-semibold text-gray-600 mb-1">Reason <span class="font-normal text-gray-400">(optional, shown to members)</span></label>
+                        <input id="cancel-reason" type="text" name="reason" maxlength="500"
+                               class="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-red-400 focus:ring-red-400">
+                    </div>
+                    <button type="submit" class="w-full bg-red-500 text-white text-sm font-semibold rounded-lg py-2 hover:opacity-90">
+                        Cancel fee and notify members
+                    </button>
+                </form>
+            </details>
+        </div>
+    @endunless
 
     {{-- Summary --}}
     <div class="bg-white rounded-xl border border-gray-100 shadow-sm grid grid-cols-3 divide-x divide-gray-100">
@@ -83,6 +152,7 @@
                                 </p>
                                 <p class="text-[10px] text-red-400 font-medium mt-0.5">Unpaid</p>
                             </div>
+                            @unless($fee->isCancelled())
                             <form method="POST" action="{{ route('officer.fees.paid', [$fee, $payment->user_id]) }}" class="flex-shrink-0">
                                 @csrf
                                 <button type="submit"
@@ -90,6 +160,7 @@
                                     Mark Paid
                                 </button>
                             </form>
+                            @endunless
                         </div>
                     @endforeach
                 </div>
@@ -127,6 +198,7 @@
                                         Receipt
                                     </a>
                                 @endif
+                                @unless($fee->isCancelled())
                                 <form method="POST" action="{{ route('officer.fees.unpaid', [$fee, $payment->user_id]) }}">
                                     @csrf
                                     <button type="submit"
@@ -134,6 +206,7 @@
                                         Undo
                                     </button>
                                 </form>
+                                @endunless
                             </div>
                         </div>
                     @endforeach

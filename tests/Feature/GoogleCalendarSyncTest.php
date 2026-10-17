@@ -176,7 +176,7 @@ function gcActivityPayload(array $overrides = []): array
         'date'                  => now()->addDays(10)->toDateString(),
         'time_start'            => '09:00',
         'time_end'              => '11:00',
-        'venue'                 => 'SCC Gymnasium',
+        'venue'                 => 'AVR',
         'purpose'               => 'Orient members.',
         'expected_participants' => 80,
         'activity_type'         => 'internal_meeting',
@@ -193,7 +193,7 @@ function gcBooking(Club $club, User $creator, array $overrides = []): ClubActivi
         'date'                  => now()->addDays(5)->toDateString(),
         'time_start'            => '13:00',
         'time_end'              => '14:00',
-        'venue'                 => 'Main AV Room',
+        'venue'                 => 'Moot Court',
         'purpose'               => 'Planning.',
         'expected_participants' => 20,
         'activity_type'         => 'internal_meeting',
@@ -230,7 +230,7 @@ it('puts a confirmed activity on the calendars of the club\'s active members, of
     $event = $google->eventsOf($member)[0];
 
     expect($event['summary'])->toBe('General Assembly (' . $club->acronym . ')')
-        ->and($event['location'])->toBe('SCC Gymnasium')
+        ->and($event['location'])->toBe('AVR')
         ->and($event['start'])->toBe(['dateTime' => now()->addDays(10)->toDateString() . 'T09:00:00', 'timeZone' => 'Asia/Manila'])
         ->and($event['end']['dateTime'])->toEndWith('T11:00:00')
         ->and($event['description'])->toContain($club->name);
@@ -266,11 +266,11 @@ it('updates the existing copy when an activity is edited, instead of adding a se
     $activity = ClubActivity::firstOrFail();
 
     $this->withSession(gcSession($officer))
-        ->patch(route('officer.activities.update', $activity), gcActivityPayload(['venue' => 'Function Hall']))
+        ->patch(route('officer.activities.update', $activity), gcActivityPayload(['venue' => 'Library']))
         ->assertSessionHasNoErrors();
 
     expect($google->eventsOf($member))->toHaveCount(1)
-        ->and($google->eventsOf($member)[0]['location'])->toBe('Function Hall');
+        ->and($google->eventsOf($member)[0]['location'])->toBe('Library');
 });
 
 it('makes no Google API call when an edit leaves the calendar copy unchanged', function () {

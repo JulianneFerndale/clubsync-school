@@ -1,0 +1,89 @@
+# Rehearsal of the SCC-server deployment on one machine: the production image
+# (nginx + php-fpm, built from ../Dockerfile) and PostgreSQL 17 side by side, the
+# way the school's server would run them. Filled with fake students only.
+#
+#   docker compose -f loadtest/docker-compose.yml up -d --build
+#   docker compose -f loadtest/docker-compose.yml exec app php artisan db:seed --force
+#   docker compose -f loadtest/docker-compose.yml exec app php artisan db:seed --class=LoadTestSeeder --force
+#   docker compose -f loadtest/docker-compose.yml exec app php artisan loadtest:sessions --out=/loadtest-out/sessions.csv
+#   k6 run loadtest/member-journeys.js
+#
+# The CPU and memory caps stand in for the server's size; change them to match
+# its specs (e.g. APP_CPUS=6 DB_CPUS=2 docker compose ... up -d).
+#
+# Nothing here reaches production: the image never contains .env, every setting
+# the app needs is given below, and Firebase and Gemini are left unset.
+
+name: clubsync-rehearsal
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: clubsync
+      POSTGRES_USER: clubsync
+      POSTGRES_PASSWORD: rehearsal-only
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=512MB
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    cpus: ${DB_CPUS:-1}
+    mem_limit: ${DB_MEM:-2g}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clubsync -d clubsync"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: clubsync-rehearsal-app
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    cpus: ${APP_CPUS:-3}
+    mem_limit: ${APP_MEM:-2g}
+    volumes:
+      - ./out:/loadtest-out
+    environment:
+      APP_NAME: ClubSync
+      APP_ENV: production
+      APP_DEBUG: "false"
+      # Rehearsal-only key. Never reuse it for a real deployment.
+      APP_KEY: base64:2IeEopSJHEWCdHqaQKygotbOPki0ppC88vFI0emqv3o=
+      APP_URL: http://localhost:8080
+      LOG_CHANNEL: stderr
+      LOG_LEVEL: warning
+      DB_CONNECTION: pgsql
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_DATABASE: clubsync
+      DB_USERNAME: clubsync
+      DB_PASSWORD: rehearsal-only
+      DB_SSLMODE: disable
+      # PHP workers (docker/php-fpm-pool.conf); ignored by an image built before it.
+      PHP_FPM_WORKERS: ${PHP_FPM_WORKERS:-40}
+      # Same drivers as render.yaml, so the first run measures today's setup.
+      SESSION_DRIVER: ${SESSION_DRIVER:-database}
+      CACHE_STORE: ${CACHE_STORE:-database}
+      QUEUE_CONNECTION: database
+      BROADCAST_CONNECTION: log
+      # Placeholders: services expect these strings, but the rehearsal never signs in
+      # through Firebase or calls Gemini. Port 9 refuses at once, so a call that does
+      # slip through fails fast instead of reaching a real project.
+      FIREBASE_API_KEY: rehearsal-no-firebase
+      FIREBASE_PROJECT_ID: rehearsal-no-firebase
+      FIREBASE_DATABASE_URL: http://127.0.0.1:9
+      GEMINI_API_KEY: rehearsal-no-gemini
+      LOADTEST: "true"
+
+volumes:
+  db-data:

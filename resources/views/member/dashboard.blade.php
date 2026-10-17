@@ -4,15 +4,6 @@
 @section('live-refresh', 'any')
 @section('content')
 
-{{-- Flash messages land here: this is where both members and officers are sent
-     after finishing something elsewhere (selecting a course, for one), and the
-     page had nowhere to show what happened. --}}
-@if(session('success'))
-    <div class="mx-4 mt-4 bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-green-700 text-sm">
-        {{ session('success') }}
-    </div>
-@endif
-
 {{-- Green header --}}
 <div class="bg-[#07873e] px-5 pt-12 pb-6">
     <div class="flex items-center justify-between mb-1">
@@ -83,7 +74,7 @@
         @else
             <div class="grid grid-cols-3 gap-2.5">
                 @foreach($academicClubs as $club)
-                    <x-club-card :club="$club" :href="route('member.clubs.show', $club)" />
+                    <x-club-card :club="$club" :href="route('member.clubs.show', $club)" :pending="$club->my_status === 'pending'" />
                 @endforeach
             </div>
         @endif
@@ -100,7 +91,7 @@
         @else
             <div class="grid grid-cols-3 gap-2.5">
                 @foreach($nonAcademicClubs as $club)
-                    <x-club-card :club="$club" :href="route('member.clubs.show', $club)" />
+                    <x-club-card :club="$club" :href="route('member.clubs.show', $club)" :pending="$club->my_status === 'pending'" />
                 @endforeach
             </div>
         @endif

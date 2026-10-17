@@ -195,7 +195,7 @@ it('asks the adviser of each club that still owes officers', function () {
         ->and($notification->title)->toBe('New officers needed')
         ->and($notification->body)->toContain('2026-2027')
         ->and($notification->body)->toContain('keep their access')
-        ->and($notification->action_url)->toBe(route('clubs.officers.index'));
+        ->and($notification->action_url)->toBe(route('clubs.officers.index', [], false));
 });
 
 it('gives the DSA one summary rather than one per club', function () {

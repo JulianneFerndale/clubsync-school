@@ -4,6 +4,10 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    @if(session('logged_out'))
+        {{-- Just logged out: resources/js/app.js signs the other open tabs out. --}}
+        <meta name="cs-logged-out" content="1">
+    @endif
     <meta name="theme-color" content="#07873e">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-title" content="ClubSync">
@@ -92,5 +96,7 @@
 
     <x-connection-status />
     <x-loading-overlay />
+    <x-flash-dialog />
+    <x-toast />
 </body>
 </html>

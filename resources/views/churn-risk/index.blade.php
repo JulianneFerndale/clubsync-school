@@ -1,4 +1,4 @@
-@extends($layout)
+@extends('layouts.app-officer')
 @section('title', 'Churn Risk Engine')
 @section('page-title', 'Churn Risk Engine')
 @section('club-name', 'Churn Risk Engine')
@@ -14,10 +14,10 @@
 
 <div class="px-4 py-5 space-y-5">
 
-    {{-- Confidentiality reminder (this data is officer/DSA-only) --}}
+    {{-- Confidentiality reminder (this data is officer-only) --}}
     <div class="flex items-start gap-2 px-3 py-2 bg-amber-50 rounded-xl border border-amber-100">
         <span class="text-amber-600 text-sm">🔒</span>
-        <span class="text-xs text-amber-700">Confidential — engagement scores are for officers and the DSA only and must not be shared with members.</span>
+        <span class="text-xs text-amber-700">Confidential — engagement scores are for club officers only and must not be shared with members, advisers or the DSA.</span>
     </div>
 
     @if($clubs->isEmpty())

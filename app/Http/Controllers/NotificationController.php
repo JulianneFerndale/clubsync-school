@@ -61,9 +61,17 @@ class NotificationController extends Controller
     {
         $userId = auth_user_id();
 
+        // The newest unread one lets a page whose live socket is down still toast what
+        // arrived while it polls (resources/js/app.js). It is the reader's own notification.
+        $latest = ClubNotification::where('recipient_id', $userId)
+            ->where('is_read', false)
+            ->latest('id')
+            ->first(['id', 'club_id', 'title', 'body', 'action_url']);
+
         return response()->json([
             'notifications' => ClubNotification::unreadCountFor($userId),
             'chat'          => ChatMessage::unreadCountFor($userId),
+            'latest'        => $latest?->only(['id', 'club_id', 'title', 'body', 'action_url']),
         ]);
     }
 

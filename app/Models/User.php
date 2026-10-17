@@ -14,7 +14,7 @@ use Illuminate\Notifications\Notifiable;
 #[Fillable([
     'first_name', 'last_name', 'edp_number', 'employee_number', 'email', 'password',
     'mobile_number', 'department_id', 'course_id', 'year_level', 'is_admin',
-    'pending_club_assignment',
+    'pending_club_assignment', 'enrollment_status',
     'firebase_uid', 'role', 'college_id', 'profile_photo_url',
     'last_password_changed', 'is_suspended', 'chat_privacy_acknowledged_at',
 ])]
@@ -56,6 +56,15 @@ class User extends Authenticatable
             'president', 'treasurer', 'mmo' => 'Club Officer',
             default                         => 'Student',
         };
+    }
+
+    /**
+     * Registered with their SCC Google account and never set a password: they sign in
+     * with Google only, and there is no ClubSync password to check or change.
+     */
+    public function signsInWithGoogleOnly(): bool
+    {
+        return $this->password === null;
     }
 
     /** POLICY.md §Authentication: a password may be changed at most once every 7 calendar days. */

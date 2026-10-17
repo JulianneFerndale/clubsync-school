@@ -32,7 +32,9 @@ return [
     |
     */
 
-    'lifetime' => (int) env('SESSION_LIFETIME', 120),
+    // POLICY.md: sessions end after 30 minutes of inactivity. The default matters —
+    // render.yaml did not set SESSION_LIFETIME, so production ran on 120.
+    'lifetime' => (int) env('SESSION_LIFETIME', 30),
 
     'expire_on_close' => env('SESSION_EXPIRE_ON_CLOSE', false),
 

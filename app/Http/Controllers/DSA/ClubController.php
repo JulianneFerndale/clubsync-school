@@ -9,6 +9,7 @@ use App\Models\Club;
 use App\Models\College;
 use App\Models\User;
 use App\Rules\FacebookPageUrl;
+use App\Services\ClubDeletion;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -21,13 +22,11 @@ class ClubController extends Controller
     {
         $search = $request->query('search');
         $type   = $request->query('type');   // 'academic' | 'non_academic' | null
-        $status = $request->query('status'); // 'compliant' | 'non_compliant' | 'pending' | null
+        $status = $request->query('status'); // 'pending' | null
 
         $clubs = Club::query()
             ->when($type === 'academic',     fn ($q) => $q->academic())
             ->when($type === 'non_academic', fn ($q) => $q->nonAcademic())
-            ->when($status === 'compliant',     fn ($q) => $q->compliant())
-            ->when($status === 'non_compliant', fn ($q) => $q->nonCompliant())
             ->when($status === 'pending',       fn ($q) => $q->pendingApplications())
             ->when($search, fn ($q) => $q->where(fn ($q) => $q
                 ->whereRaw('LOWER(name) LIKE ?', ['%'.strtolower($search).'%'])
@@ -36,7 +35,6 @@ class ClubController extends Controller
             ->withCount([
                 'members as active_member_count'      => fn ($q) => $q->where('status', 'active'),
                 'members as pending_applications_count' => fn ($q) => $q->where('registration_status', 'pending'),
-                'chedReports as finalized_reports_count' => fn ($q) => $q->where('is_finalized', true),
             ])
             ->with('adviserUser', 'college')
             ->orderBy('name')
@@ -50,8 +48,6 @@ class ClubController extends Controller
 
         $counts = [
             'all'           => $base()->count(),
-            'compliant'     => $base()->compliant()->count(),
-            'non_compliant' => $base()->nonCompliant()->count(),
             'pending'       => $base()->pendingApplications()->count(),
         ];
 
@@ -126,7 +122,10 @@ class ClubController extends Controller
             'pending'  => $club->members()->where('status', 'pending')->count(),
         ];
 
-        return view('dsa.clubs.show', compact('club', 'activeMembers', 'recentEvents', 'stats'));
+        return view('dsa.clubs.show', compact('club', 'activeMembers', 'recentEvents', 'stats') + [
+            'deletion'         => ClubDeletion::inventory($club),
+            'confirmationWord' => ClubDeletion::confirmationWord($club),
+        ]);
     }
 
     public function edit(Club $club): View
@@ -200,5 +199,41 @@ class ClubController extends Controller
 
         return redirect()->route('dsa.clubs.show', $club)
             ->with('success', 'Club updated successfully.');
+    }
+
+    /**
+     * Permanently delete the club and all of its data. The DSA confirms by typing the
+     * club's acronym, so a stray click cannot do it.
+     */
+    public function destroy(Request $request, Club $club, ClubDeletion $deletion): RedirectResponse
+    {
+        $word = ClubDeletion::confirmationWord($club);
+
+        $request->validate([
+            'confirm_acronym' => ['required', 'string'],
+        ], [
+            'confirm_acronym.required' => "Type {$word} to confirm the deletion.",
+        ]);
+
+        if (strcasecmp(trim((string) $request->input('confirm_acronym')), $word) !== 0) {
+            return back()->withErrors(['confirm_acronym' => "That does not match {$word}. Nothing was deleted."]);
+        }
+
+        $result = $deletion->delete($club);
+
+        $message = "{$club->name} and all of its data were permanently deleted.";
+
+        if ($result['demoted'] > 0) {
+            $message .= " {$result['demoted']} former " . str('officer')->plural($result['demoted'])
+                . ' of no other club now ' . ($result['demoted'] === 1 ? 'has' : 'have') . ' the Member role.';
+        }
+
+        if ($result['unassigned'] > 0) {
+            $message .= " {$result['unassigned']} " . str('student')->plural($result['unassigned'])
+                . ' whose course mapped only to this club ' . ($result['unassigned'] === 1 ? 'is' : 'are')
+                . ' now flagged Pending Club Assignment.';
+        }
+
+        return redirect()->route('dsa.clubs.index')->with('success', $message);
     }
 }

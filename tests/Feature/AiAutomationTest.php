@@ -1,13 +1,11 @@
 <?php
 
 use App\Jobs\DetectClubViolationsJob;
-use App\Jobs\GenerateChedReportJob;
 use App\Jobs\NotifyMembersOfAnnouncement;
 use App\Models\AiNotificationQueue;
 use App\Models\Announcement;
 use App\Models\Attendance;
 use App\Models\AuditLog;
-use App\Models\ChedReport;
 use App\Models\Club;
 use App\Models\ClubActivity;
 use App\Models\ClubMember;
@@ -17,6 +15,7 @@ use App\Models\ClubOfficerRecord;
 use App\Models\MemberSemesterStatus;
 use App\Models\Semester;
 use App\Models\User;
+use App\Services\AnnouncementTemplates;
 use Carbon\Carbon;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -25,6 +24,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Sleep;
 use Maatwebsite\Excel\Facades\Excel;
 
 uses(RefreshDatabase::class);
@@ -348,7 +348,7 @@ it('P1: reports a clean error when the Gemini call fails, and saves nothing', fu
 
     $response->assertStatus(500);
 
-    expect($response->json('error'))->toBe('AI generation failed. Please try again.')
+    expect($response->json('error'))->toBe('The AI could not draft this. Try again, or start from a template below.')
         ->and(Announcement::count())->toBe(0);
 });
 
@@ -363,7 +363,7 @@ it('P1: refuses to call Gemini at all when no API key is configured', function (
 
     $response->assertStatus(503);
 
-    expect($response->json('error'))->toBe('AI is not configured.');
+    expect($response->json('error'))->toBe('AI is not configured. Start from a template below, or write it yourself.');
 
     Http::assertNothingSent();
 });
@@ -697,7 +697,7 @@ function aiActivity(Club $club, User $creator, array $overrides = []): ClubActiv
         'date'                  => now()->subDays(10)->toDateString(),
         'time_start'            => '08:00',
         'time_end'              => '12:00',
-        'venue'                 => 'Open Court',
+        'venue'                 => 'YDC',
         'purpose'               => 'Community service.',
         'expected_participants' => 40,
         'activity_type'         => 'community_involvement',
@@ -775,68 +775,6 @@ it('P4: does not flag a club that has already filed its presence update', functi
     aiRunScan();
 
     expect(aiViolations($club)->firstWhere('gap_type', 'overdue_presence_update'))->toBeNull();
-});
-
-it('P4: flags a completed activity whose CHED report is more than 7 days overdue', function () {
-    aiScanOffline();
-
-    [$officer, $club] = aiOfficer();
-    aiActivity($club, $officer, [
-        'title'        => 'Brigada Eskwela Outreach',
-        'status'       => 'completed',
-        'completed_at' => now()->subDays(9),
-    ]);
-
-    aiRunScan();
-
-    $violation = aiViolations($club)->firstWhere('gap_type', 'missing_ched_report');
-
-    expect($violation)->not->toBeNull()
-        ->and($violation->description)->toContain($club->name)
-        ->and($violation->description)->toContain('Brigada Eskwela Outreach')
-        ->and($violation->description)->toContain('7 days');
-});
-
-it('P4: does not flag a completed activity whose CHED report is finalized', function () {
-    aiScanOffline();
-
-    [$officer, $club] = aiOfficer();
-    $activity = aiActivity($club, $officer, [
-        'status'       => 'completed',
-        'completed_at' => now()->subDays(9),
-    ]);
-
-    ChedReport::create([
-        'club_activity_id' => $activity->id,
-        'club_id'          => $club->id,
-        'report_type'      => 'community_service',
-        'is_finalized'     => true,
-    ]);
-
-    aiRunScan();
-
-    expect(aiViolations($club)->firstWhere('gap_type', 'missing_ched_report'))->toBeNull();
-});
-
-it('P4: still flags a CHED report that exists but was never finalized', function () {
-    aiScanOffline();
-
-    [$officer, $club] = aiOfficer();
-    $activity = aiActivity($club, $officer, [
-        'status'       => 'completed',
-        'completed_at' => now()->subDays(9),
-    ]);
-
-    ChedReport::create([
-        'club_activity_id' => $activity->id,
-        'club_id'          => $club->id,
-        'report_type'      => 'community_service',
-        'is_finalized'     => false,
-    ]);
-
-    aiRunScan();
-
-    expect(aiViolations($club)->firstWhere('gap_type', 'missing_ched_report'))->not->toBeNull();
 });
 
 it('P4: flags an activity approval request left pending for more than 5 days', function () {
@@ -943,16 +881,9 @@ it('P4: leaves a fully compliant club unflagged', function () {
         'updated_by'      => $officer->id,
     ]);
 
-    $activity = aiActivity($club, $officer, [
+    aiActivity($club, $officer, [
         'status'       => 'completed',
         'completed_at' => now()->subDays(9),
-    ]);
-
-    ChedReport::create([
-        'club_activity_id' => $activity->id,
-        'club_id'          => $club->id,
-        'report_type'      => 'community_service',
-        'is_finalized'     => true,
     ]);
 
     aiRunScan();
@@ -995,7 +926,7 @@ it('P4: raises it again on a later night once the earlier one is resolved', func
 
 it('P4: drafts the DSA statement with AI but never sends it automatically', function () {
     // POLICY.md §AI & Automation — AI output waits in a human review queue.
-    aiFakeGemini('Please submit the outstanding CHED report within 5 working days.');
+    aiFakeGemini('Please submit the semestral presence update within 5 working days.');
     aiSemester(startedDaysAgo: 20);
 
     [, $club] = aiOfficer();
@@ -1038,258 +969,92 @@ it('P4: names the exact violation in the DSA notification, not a raw slug', func
     $dsa = aiUser('dsa');
     [$officer, $club] = aiOfficer();
 
-    aiActivity($club, $officer, [
-        'title'        => 'Brigada Eskwela Outreach',
-        'status'       => 'completed',
-        'completed_at' => now()->subDays(9),
+    $activity = aiActivity($club, $officer, [
+        'title'           => 'Brigada Eskwela Outreach',
+        'approval_status' => 'pending_approval',
+        'date'            => now()->addDays(20)->toDateString(),
     ]);
+    $activity->created_at = now()->subDays(6);
+    $activity->save();
 
     aiRunScan();
 
     $notification = ClubNotification::where('recipient_id', $dsa->id)->first();
 
     expect($notification)->not->toBeNull()
-        ->and($notification->title)->toContain('Missing CHED report')
+        ->and($notification->title)->toContain('Overdue activity approval request')
         ->and($notification->body)->toContain($club->name)
         ->and($notification->body)->toContain('Brigada Eskwela Outreach')
         // The raw database slug must never reach a human-facing message.
-        ->and($notification->title . $notification->body)->not->toContain('missing_ched_report');
+        ->and($notification->title . $notification->body)->not->toContain('overdue_activity_request');
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Procedure 5 — "Tests the system if the post-event report automatically pulls
-// accurate attendance and engagement data from the corresponding event record."
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Announcements when the AI is down: templates always work ─────────────────
 
-/** Check a member in on an activity, as the officer would on the attendance page. */
-function aiCheckIn(ClubActivity $activity, User $user, ?string $timeIn = '08:05', ?string $timeOut = '11:40'): Attendance
-{
-    return Attendance::create([
-        'event_id'    => $activity->id,
-        'user_id'     => $user->id,
-        'time_in'     => $timeIn ? $activity->date->copy()->setTimeFromTimeString($timeIn) : null,
-        'time_out'    => $timeOut ? $activity->date->copy()->setTimeFromTimeString($timeOut) : null,
-        'recorded_by' => $activity->created_by,
-    ]);
-}
-
-it('P5: counts the people who actually attended, not the whole club roster', function () {
+it('Fallback: offers announcement templates with no AI configured at all', function () {
+    config(['gemini.api_key' => '']);
     [$officer, $club] = aiOfficer();
 
-    // Ten approved members on the roster…
-    $members = collect(range(1, 10))->map(fn () => aiMember($club)[0]);
-
-    $activity = aiActivity($club, $officer, [
-        'title'                 => 'Brigada Eskwela Outreach',
-        'activity_type'         => 'acle',
-        'expected_participants' => 8,
-        'status'                => 'completed',
-        'completed_at'          => now(),
-    ]);
-
-    // …but only three were checked in on the day.
-    $members->take(3)->each(fn (User $m) => aiCheckIn($activity, $m));
-
-    $data = GenerateChedReportJob::reportData($activity);
-
-    expect($data['participant_count'])->toBe(3)
-        ->and($data['eligible_members'])->toBe(10)
-        ->and($data['participants'])->toHaveCount(3)
-        ->and($data['participants']->pluck('name')->all())->toEqual($members->take(3)->map->name->all());
+    $this->withSession(aiSession($officer))->get(route('officer.announcements.create'))
+        ->assertOk()
+        ->assertDontSee('Generate with AI')
+        ->assertSee('Start from a template')
+        ->assertSee('Meeting or general assembly')
+        ->assertSee('Request to use a venue or equipment')
+        ->assertSee($club->name);
 });
 
-it('P5: reads the attendance times off the activity record', function () {
+it('Fallback: the edit page offers the same templates', function () {
+    config(['gemini.api_key' => '']);
     [$officer, $club] = aiOfficer();
-    [$memberUser] = aiMember($club);
+    $announcement = aiAnnouncement($club, $officer);
 
-    $activity = aiActivity($club, $officer, [
-        'status'       => 'completed',
-        'completed_at' => now(),
-    ]);
-
-    aiCheckIn($activity, $memberUser, '08:15', '11:30');
-
-    $participant = GenerateChedReportJob::reportData($activity)['participants']->first();
-
-    expect($participant['name'])->toBe($memberUser->name)
-        ->and($participant['time_in'])->toBe('8:15 AM')
-        ->and($participant['time_out'])->toBe('11:30 AM');
+    $this->withSession(aiSession($officer))->get(route('officer.announcements.edit', $announcement))
+        ->assertOk()->assertSee('Start from a template')->assertSee('Fee reminder');
 });
 
-it('P5: computes the engagement figures from the roster and the estimate', function () {
-    [$officer, $club] = aiOfficer();
+it('Fallback: during a Gemini outage the AI panel says so, and the templates stay', function () {
+    Sleep::fake();
+    config(['gemini.api_key' => 'test-key']);
+    Http::fake(['*generativelanguage*' => Http::response('unavailable', 503)]);
+    [$officer] = aiOfficer();
 
-    $members = collect(range(1, 8))->map(fn () => aiMember($club)[0]);
+    $first = $this->withSession(aiSession($officer))->postJson(route('officer.announcements.ai-draft'), aiInput());
+    $first->assertStatus(503);
+    expect($first->json('error'))->toBe('The AI is unavailable right now. Start from a template below, or write it yourself.');
 
-    $activity = aiActivity($club, $officer, [
-        'expected_participants' => 5,
-        'status'                => 'completed',
-        'completed_at'          => now(),
-    ]);
+    // Remembered: the next request does not wait on Gemini again.
+    $this->withSession(aiSession($officer))->postJson(route('officer.announcements.ai-draft'), aiInput())->assertStatus(503);
+    expect(Http::recorded())->toHaveCount(3);
 
-    $members->take(6)->each(fn (User $m) => aiCheckIn($activity, $m));
-
-    $data = GenerateChedReportJob::reportData($activity);
-
-    expect($data['participant_count'])->toBe(6)
-        ->and($data['eligible_members'])->toBe(8)
-        ->and($data['absent_count'])->toBe(2)
-        ->and($data['attendance_rate'])->toBe(75.0)          // 6 of 8 eligible members
-        ->and($data['expected_participants'])->toBe(5)
-        ->and($data['turnout_vs_expected'])->toBe(120.0);    // 6 against an estimate of 5
+    $this->withSession(aiSession($officer))->get(route('officer.announcements.create'))
+        ->assertOk()
+        ->assertSee('The AI is unavailable right now')
+        ->assertDontSee('id="ai-btn"', false)
+        ->assertSee('Start from a template');
 });
 
-it('P5: does not count a member who registered but never timed in', function () {
-    [$officer, $club] = aiOfficer();
-    [$present]   = aiMember($club);
-    [$noShow]    = aiMember($club);
+it('Fallback: the AI draft endpoint is rate limited and answers JSON when it is', function () {
+    aiFakeGemini();
+    [$officer] = aiOfficer();
 
-    $activity = aiActivity($club, $officer, [
-        'status'       => 'completed',
-        'completed_at' => now(),
-    ]);
+    for ($i = 0; $i < 20; $i++) {
+        $this->withSession(aiSession($officer))->postJson(route('officer.announcements.ai-draft'), aiInput())->assertOk();
+    }
 
-    aiCheckIn($activity, $present);
-    aiCheckIn($activity, $noShow, null, null);
-
-    $data = GenerateChedReportJob::reportData($activity);
-
-    expect($data['participant_count'])->toBe(1)
-        ->and($data['no_show_count'])->toBe(1)
-        ->and($data['participants']->pluck('name')->all())->toBe([$present->name]);
+    $this->withSession(aiSession($officer))->postJson(route('officer.announcements.ai-draft'), aiInput())
+        ->assertStatus(429)->assertHeader('Content-Type', 'application/json');
 });
 
-it('P5: never borrows attendance from another activity', function () {
-    [$officer, $club] = aiOfficer();
-    [$memberUser] = aiMember($club);
+it('Fallback: templates invent nothing — every detail the club must supply is a bracket', function () {
+    foreach (AnnouncementTemplates::all('BYTE Org') as $key => $template) {
+        expect($template['type'])->toBeIn(['announcement', 'letter'])
+            ->and($template['content'])->toMatch('/\[[^\]]+\]/')
+            // No date, time, amount or count is ever filled in for the officer: outside the
+            // brackets there is not a single digit.
+            ->and(preg_match('/\d/', preg_replace('/\[[^\]]*\]/', '', $template['content'])))->toBe(0, "{$key} contains a figure");
+    }
 
-    $reported = aiActivity($club, $officer, [
-        'title'        => 'Reported Activity',
-        'status'       => 'completed',
-        'completed_at' => now(),
-    ]);
-
-    $other = aiActivity($club, $officer, ['title' => 'A Different Activity']);
-
-    aiCheckIn($other, $memberUser);
-
-    $data = GenerateChedReportJob::reportData($reported);
-
-    expect($data['participant_count'])->toBe(0)
-        ->and($data['participants'])->toBeEmpty();
+    expect(AnnouncementTemplates::all('')['invitation']['content'])->toStartWith('[club name] invites you');
 });
 
-it('P5: says so plainly when no attendance was recorded', function () {
-    // Reporting the whole roster as participants would be a false certification.
-    [$officer, $club] = aiOfficer();
-    aiMember($club);
-    aiMember($club);
-
-    $activity = aiActivity($club, $officer, [
-        'status'       => 'completed',
-        'completed_at' => now(),
-    ]);
-
-    $data = GenerateChedReportJob::reportData($activity);
-
-    expect($data['attendance_recorded'])->toBeFalse()
-        ->and($data['participant_count'])->toBe(0)
-        ->and($data['participants'])->toBeEmpty()
-        ->and($data['eligible_members'])->toBe(2)
-        ->and($data['attendance_rate'])->toBe(0.0);
-});
-
-it('P5: excludes members marked inactive for the semester from the denominator', function () {
-    [$officer, $club] = aiOfficer();
-    $semester = aiSemester(startedDaysAgo: 20);
-
-    [$activeUser, $activeMember]     = aiMember($club);
-    [, $inactiveMember]              = aiMember($club);
-
-    MemberSemesterStatus::create([
-        'club_member_id'  => $activeMember->id,
-        'semester_id'     => $semester->id,
-        'semester_status' => 'active',
-        'updated_by'      => $officer->id,
-    ]);
-
-    MemberSemesterStatus::create([
-        'club_member_id'  => $inactiveMember->id,
-        'semester_id'     => $semester->id,
-        'semester_status' => 'inactive',
-        'updated_by'      => $officer->id,
-    ]);
-
-    $activity = aiActivity($club, $officer, [
-        'date'         => now()->toDateString(),
-        'status'       => 'completed',
-        'completed_at' => now(),
-    ]);
-
-    aiCheckIn($activity, $activeUser);
-
-    $data = GenerateChedReportJob::reportData($activity);
-
-    expect($data['eligible_members'])->toBe(1)
-        ->and($data['participant_count'])->toBe(1)
-        ->and($data['attendance_rate'])->toBe(100.0);
-});
-
-it('P5: carries the activity details across into the report', function () {
-    [$officer, $club] = aiOfficer();
-
-    $adviser = aiUser('adviser');
-    $club->update(['adviser_id' => $adviser->id]);
-
-    $activity = aiActivity($club, $officer, [
-        'title'         => 'Brigada Eskwela Outreach',
-        'activity_type' => 'acle',
-        'venue'         => 'Open Court',
-        'purpose'       => 'Prepare the partner school for the opening of classes.',
-        'description'   => 'Cleaning and repair drive with the barangay.',
-        'status'        => 'completed',
-        'completed_at'  => now(),
-    ]);
-
-    $data = GenerateChedReportJob::reportData($activity->fresh());
-
-    expect($data['club_name'])->toBe($club->name)
-        ->and($data['adviser_name'])->toBe($adviser->name)
-        ->and($data['activity_title'])->toBe('Brigada Eskwela Outreach')
-        ->and($data['venue'])->toBe('Open Court')
-        ->and($data['objectives'])->toBe('Prepare the partner school for the opening of classes.')
-        ->and($data['officer_in_charge'])->toBe($officer->name)
-        ->and($data['date'])->toBe($activity->date->format('F j, Y'));
-});
-
-it('P5: generates the report automatically when the officer completes the activity', function () {
-    Storage::fake('local');
-    Excel::fake();
-    aiScanOffline(); // the completion also queues an AI narrative — keep it offline
-
-    [$officer, $club] = aiOfficer();
-    [$memberUser] = aiMember($club);
-
-    $activity = aiActivity($club, $officer, [
-        'title'         => 'Brigada Eskwela Outreach',
-        'activity_type' => 'acle',
-        'date'          => now()->subDay()->toDateString(),
-        'status'        => 'scheduled',
-    ]);
-
-    aiCheckIn($activity, $memberUser);
-
-    $this->withSession(aiSession($officer))
-        ->post(route('officer.activities.complete', $activity))
-        ->assertRedirect();
-
-    $report = ChedReport::where('club_activity_id', $activity->id)->first();
-
-    expect($activity->fresh()->status)->toBe('completed')
-        ->and($report)->not->toBeNull()
-        ->and($report->report_type)->toBe('acle')
-        ->and($report->club_id)->toBe($club->id)
-        ->and($report->is_finalized)->toBeFalse();
-
-    Storage::disk('local')->assertExists('reports/' . $activity->id . '/ched-report.pdf');
-});

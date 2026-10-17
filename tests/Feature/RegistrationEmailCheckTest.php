@@ -4,6 +4,7 @@ use App\Models\Course;
 use App\Models\Department;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 
@@ -79,6 +80,33 @@ function regPayload(array $overrides = []): array
         'year_level'            => 2,
         'terms'                 => 'on',
     ], $overrides);
+}
+
+/**
+ * The last step: proof of enrollment, with Gemini reading a COE that matches
+ * regPayload(). Registration only creates the account here now.
+ */
+function regVerify($test, Course $course)
+{
+    config(['gemini.api_key' => 'test-key']);
+
+    Http::fake(['*generativelanguage*' => Http::response(['candidates' => [[
+        'content' => ['parts' => [['text' => json_encode([
+            'document_type' => 'certificate_of_enrollment',
+            'school_name'   => 'SAINT COLUMBAN COLLEGE',
+            'full_name'     => 'DELA CRUZ, JUAN P',
+            'edp_number'    => '0123456789',
+            'course'        => 'BSIT',
+            'course_id'     => $course->id,
+            'looks_altered' => false,
+            'notes'         => '',
+        ])]]],
+        'finishReason' => 'STOP',
+    ]]])]);
+
+    return $test->post('/register/verify', [
+        'document' => UploadedFile::fake()->image('coe.jpg', 600, 800),
+    ]);
 }
 
 /** An existing ClubSync account, Firebase side included. */
@@ -182,14 +210,62 @@ it('finishes registration without creating a second Firebase account', function 
     // Only the step-1 signUp may have been sent.
     Http::assertSentCount(1);
 
-    $this->post('/register/course', ['course_id' => $course->id]);
+    $this->post('/register/course', ['course_id' => $course->id])->assertRedirect(route('register.verify'));
+    regVerify($this, $course);
 
     $user = User::where('email', 'juan.delacruz@sccpag.edu.ph')->firstOrFail();
+
+    // regVerify() started a fresh recording: the last step sent no signUp of its own.
+    expect(Http::recorded(fn ($request) => str_contains($request->url(), 'accounts:signUp')))->toHaveCount(0);
 
     expect($user->firebase_uid)->toBe('new-uid-123')
         ->and($user->course_id)->toBe($course->id)
         ->and($user->year_level)->toBe(2)
         ->and(session('register.firebase_uid'))->toBeNull();   // cleared on the way out
+});
+
+it('tells the new student which academic club they are now a member of', function () {
+    regFirebaseFree();
+
+    $department = Department::create(['slug' => 'ccs', 'name' => 'College of Computing Studies', 'short_name' => 'CCS']);
+    $course     = Course::create(['slug' => 'bsit', 'name' => 'BS Information Technology', 'department_id' => $department->id]);
+    $club       = \App\Models\Club::create([
+        'slug' => 'byte', 'acronym' => 'BYTE Org', 'name' => 'Building the Youth through Technology Education',
+        'type' => 'academic', 'club_type' => 'Academic', 'course_slug' => 'bsit', 'department_slug' => 'ccs', 'is_active' => true,
+    ]);
+    $club->courses()->attach($course->id);
+
+    $this->post('/register', regPayload());
+    $this->post('/register/department', ['department_id' => $department->id]);
+
+    $this->post('/register/course', ['course_id' => $course->id]);
+
+    regVerify($this, $course)
+        ->assertRedirect(route('member.dashboard'))
+        ->assertSessionHas('success', fn (string $message) => str_starts_with($message, 'Welcome to ClubSync!')
+            && str_contains($message, 'You are now a member of ' . $club->name));
+
+    $user = User::where('email', 'juan.delacruz@sccpag.edu.ph')->firstOrFail();
+
+    expect(\App\Models\ClubNotification::where('recipient_id', $user->id)->sole()->title)
+        ->toBe("Welcome to {$club->name}!")
+        ->and(\App\Models\ClubMember::where('user_id', $user->id)->where('club_id', $club->id)->sole()->status)
+        ->toBe('active');
+});
+
+it('tells the new student when their course maps to no club yet (POLICY §Registration)', function () {
+    regFirebaseFree();
+
+    $department = Department::create(['slug' => 'ccs', 'name' => 'College of Computing Studies', 'short_name' => 'CCS']);
+    $course     = Course::create(['slug' => 'bsit', 'name' => 'BS Information Technology', 'department_id' => $department->id]);
+
+    $this->post('/register', regPayload());
+    $this->post('/register/department', ['department_id' => $department->id]);
+
+    $this->post('/register/course', ['course_id' => $course->id]);
+
+    regVerify($this, $course)
+        ->assertSessionHas('success', fn (string $message) => str_contains($message, 'asked to review your club assignment'));
 });
 
 it('sends them back to the email field when the session lost the claimed account', function () {

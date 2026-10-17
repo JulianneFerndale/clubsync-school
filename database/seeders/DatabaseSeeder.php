@@ -16,6 +16,7 @@ class DatabaseSeeder extends Seeder
             AdminSeeder::class,
             ClubSeeder::class,
             ClubFacebookLinkSeeder::class,
+            ReportTemplateSeeder::class,
         ]);
     }
 }

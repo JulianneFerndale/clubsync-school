@@ -7,43 +7,28 @@
 @section('content')
 <div class="max-w-lg mx-auto px-4 py-8 space-y-6">
 
-    {{-- Success / Error flash --}}
-    @if(session('success'))
-        <div class="bg-green-50 border border-green-200 text-green-800 text-sm rounded-xl px-4 py-3">
-            {{ session('success') }}
-        </div>
-    @endif
-    @if($errors->any())
-        <div class="bg-red-50 border border-red-200 text-red-800 text-sm rounded-xl px-4 py-3">
-            {{ $errors->first() }}
-        </div>
-    @endif
-
     {{-- Profile card --}}
     <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
 
-        {{-- Header band --}}
-        <div class="bg-[#07873e] h-24 relative"></div>
-
         {{-- Avatar --}}
-        <div class="px-6 pb-6">
-            <div class="-mt-12 mb-4 flex items-end gap-4">
-                <div class="relative">
+        <div class="p-6">
+            <div class="mb-5 flex items-center gap-4">
+                <div class="relative flex-shrink-0">
                     @if($user->profile_photo_url)
                         <img src="{{ $user->profile_photo_url }}"
                              alt="{{ $user->first_name }}"
-                             class="w-24 h-24 rounded-full object-cover border-4 border-white shadow-md">
+                             class="w-20 h-20 rounded-full object-cover ring-4 ring-[#07873e]/10">
                     @else
-                        <div class="w-24 h-24 rounded-full bg-[#07873e] border-4 border-white shadow-md flex items-center justify-center">
-                            <span class="text-white text-3xl font-bold">
+                        <div class="w-20 h-20 rounded-full bg-[#07873e] ring-4 ring-[#07873e]/10 flex items-center justify-center">
+                            <span class="text-white text-2xl font-bold">
                                 {{ strtoupper(substr($user->first_name ?? 'U', 0, 1)) }}
                             </span>
                         </div>
                     @endif
                 </div>
-                <div class="pb-1">
+                <div class="min-w-0">
                     <p class="font-bold text-gray-900 text-lg leading-tight">{{ $user->first_name }} {{ $user->last_name }}</p>
-                    <p class="text-gray-500 text-sm">{{ $user->email }}</p>
+                    <p class="text-gray-500 text-sm truncate">{{ $user->email }}</p>
                 </div>
             </div>
 
@@ -121,8 +106,15 @@
     {{-- Change password --}}
     <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
         <h2 class="font-bold text-gray-900 mb-1">Change Password</h2>
+
+        @if($user->signsInWithGoogleOnly())
+            {{-- Registered with Google and never set a password: nothing to change. --}}
+            <p class="text-sm text-gray-600">
+                You sign in with your SCC Google account ({{ $user->email }}), so there is no ClubSync password to change.
+            </p>
+        @else
         <p class="text-xs text-gray-500 mb-4">
-            At least 8 characters, with an uppercase letter, a number, and a special character.
+            At least 8 characters, with an uppercase letter, a lowercase letter and a number.
             For your security, a password can only be changed once every {{ $user::PASSWORD_COOLDOWN_DAYS }} days.
         </p>
 
@@ -154,6 +146,7 @@
                     Update Password
                 </button>
             </form>
+        @endif
         @endif
     </div>
 </div>

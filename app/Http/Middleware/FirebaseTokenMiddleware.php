@@ -6,11 +6,20 @@ use App\Models\User;
 use App\Services\AuthManager;
 use App\Services\SessionManager;
 use Closure;
+use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
-class FirebaseTokenMiddleware
+/**
+ * The sign-in check for every private page and action.
+ *
+ * Marked as authentication middleware so Laravel runs it before route-model binding,
+ * as it does its own `auth`: a signed-out request for /member/clubs/{id} goes to the
+ * sign-in page before any record is looked up — the same answer whether the id
+ * exists or not, so nobody signed out can probe which records exist.
+ */
+class FirebaseTokenMiddleware implements AuthenticatesRequests
 {
     public function __construct(
         private AuthManager $auth,

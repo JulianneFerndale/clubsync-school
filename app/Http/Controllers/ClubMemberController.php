@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\NotifyAdviserOfMemberSubmission;
+use App\Jobs\NotifyApplicantsOfSubmission;
 use App\Jobs\NotifyClubOfMemberDecision;
 use App\Jobs\SyncClubMemberGoogleCalendar;
 use App\Models\Club;
@@ -52,12 +53,22 @@ class ClubMemberController extends Controller
         $validated = $request->validate([
             'member_ids'   => ['required', 'array', 'min:1'],
             'member_ids.*' => ['integer', 'exists:club_members,id'],
+        ], [
+            'member_ids.required' => 'Tick at least one applicant to submit to your adviser.',
+            'member_ids.min'      => 'Tick at least one applicant to submit to your adviser.',
         ]);
 
         $members = ClubMember::where('club_id', $club->id)
             ->whereIn('id', $validated['member_ids'])
             ->where('registration_status', '!=', 'approved') // locked once approved
             ->get();
+
+        // Applicants reaching the adviser now: never sent before, or sent back rejected.
+        // A second press on someone already waiting must not tell them again.
+        $forwarded = $members
+            ->filter(fn (ClubMember $m) => $m->submitted_by === null || $m->registration_status === 'rejected')
+            ->pluck('id')
+            ->all();
 
         foreach ($members as $member) {
             $member->update([
@@ -73,7 +84,13 @@ class ClubMemberController extends Controller
             return back()->with('info', 'No eligible members were selected for submission.');
         }
 
-        NotifyAdviserOfMemberSubmission::dispatch($club->id, $members->count(), auth_user_id());
+        // In the request, not the queue: the adviser has to hear about it even where
+        // no queue worker runs (the Render image has none).
+        NotifyAdviserOfMemberSubmission::dispatchSync($club->id, $members->count(), auth_user_id());
+
+        if ($forwarded) {
+            NotifyApplicantsOfSubmission::dispatchSync($forwarded);
+        }
 
         return redirect()->route('clubs.members.index')
             ->with('success', $members->count() . ' member(s) submitted to your club adviser for review.');
@@ -146,7 +163,8 @@ class ClubMemberController extends Controller
             Log::warning('Firebase member_status mirror failed for member #' . $member->id . ': ' . $e->getMessage());
         }
 
-        NotifyClubOfMemberDecision::dispatch($member->id, $decision);
+        // In the request, not the queue, for the same reason as the submission notice.
+        NotifyClubOfMemberDecision::dispatchSync($member->id, $decision, auth_user_id());
 
         // An approved member gets the club's upcoming activities on their Google Calendar.
         SyncClubMemberGoogleCalendar::dispatch($member->user_id, $member->club_id);

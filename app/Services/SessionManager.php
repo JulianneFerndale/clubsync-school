@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use App\Models\EnrollmentVerification;
+use App\Models\User;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Redirect;
 
@@ -27,6 +29,54 @@ class SessionManager
         if ($refreshToken !== null) {
             session(['firebase_refresh_token' => $refreshToken]);
         }
+    }
+
+    /**
+     * Open the session of a user Firebase has just signed in — by password or by
+     * Google — and send them where they belong. The caller has already refused a
+     * suspended account.
+     *
+     * @param  array  $firebaseData  Firebase's sign-in answer (localId, idToken, refreshToken)
+     */
+    public function signIn(User $user, array $firebaseData): RedirectResponse
+    {
+        // Sync firebase_uid if this user pre-dates the Firebase migration
+        if (! $user->firebase_uid) {
+            $user->update(['firebase_uid' => $firebaseData['localId']]);
+        }
+
+        request()->session()->regenerate();
+
+        $this->store(
+            $firebaseData['idToken'],
+            $firebaseData['localId'],
+            $user->role,
+            $user->id,
+            $user->is_admin,
+            $firebaseData['refreshToken'] ?? null,
+        );
+
+        // Answered here so RequireCourseSelection does not have to ask the database
+        // on every request of the session.
+        session(['course_selected' => (bool) $user->course_id]);
+
+        // Likewise for RequireEnrollmentVerification. A student still waiting on the DSA
+        // is not cached, so the gate looks again — and lets them in once approved.
+        $held = in_array($user->enrollment_status, [EnrollmentVerification::STATUS_PENDING, EnrollmentVerification::STATUS_REJECTED], true);
+
+        session(['enrollment_cleared' => ! $held]);
+
+        // Confirmed on the page they land on by <x-toast />, which leaves by itself.
+        session()->flash('toast', [
+            'title' => 'Logged in successfully',
+            'text'  => 'Welcome back, ' . $user->first_name . '!',
+        ]);
+
+        if ($held) {
+            return Redirect::route('verification.show');
+        }
+
+        return $this->redirectByRole($user->role);
     }
 
     /**

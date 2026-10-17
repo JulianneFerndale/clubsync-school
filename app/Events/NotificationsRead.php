@@ -3,11 +3,11 @@
 namespace App\Events;
 
 use App\Models\ClubNotification;
+use App\Support\LiveBroadcast;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Foundation\Events\Dispatchable;
-use Illuminate\Support\Facades\Log;
 
 /**
  * Tell a user's other open tabs and devices that their notifications were read, so
@@ -23,11 +23,7 @@ class NotificationsRead implements ShouldBroadcastNow
     /** Best-effort: a Reverb outage must never fail the page that marked them read. */
     public static function notify(int $userId): void
     {
-        try {
-            broadcast(new static($userId));
-        } catch (\Throwable $e) {
-            Log::warning('Notification read broadcast failed: ' . $e->getMessage());
-        }
+        LiveBroadcast::send(new static($userId), 'Notification read');
     }
 
     public function broadcastOn(): PrivateChannel

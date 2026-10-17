@@ -40,6 +40,8 @@ php artisan db:seed --class=SeedAdmin
 3. `SessionManager::store()` saves `idToken`, `uid`, `role`, `user_id` to Laravel session
 4. `firebase.token` middleware auto-refreshes expired tokens on each request
 
+"Continue with Google" (`Auth\GoogleController`) is a second way into the same flow. `GoogleSignIn` runs the OAuth code flow and accepts only `hd=sccpag.edu.ph` accounts, before Firebase is called. `AuthManager::signInWithGoogle()` (Firebase `accounts:signInWithIdp`) then returns Firebase tokens. `SessionManager::signIn()` opens the session for both methods. Setup: `docs/GOOGLE-SIGN-IN-SETUP.md`.
+
 **Middleware stack (routes/web.php):**
 - `firebase.token` — validates/refreshes Firebase JWT in session
 - `guest.firebase` — blocks authenticated users from auth pages

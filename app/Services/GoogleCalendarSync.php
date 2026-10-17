@@ -212,7 +212,8 @@ class GoogleCalendarSync
 
     private function feeEntries(?Fee $fee): array
     {
-        if (! $fee?->club) {
+        // A cancelled fee is no longer due from anyone, so it comes off every calendar.
+        if (! $fee?->club || $fee->isCancelled()) {
             return [];
         }
 

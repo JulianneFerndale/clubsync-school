@@ -11,11 +11,6 @@
 
 <div class="px-4 py-4 space-y-4">
 
-    @if(session('success'))
-        <div class="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-green-700 text-sm">
-            {{ session('success') }}
-        </div>
-    @endif
 
     {{-- Search --}}
     <form method="GET" action="{{ route('dsa.clubs.index') }}" class="flex gap-2">
@@ -55,12 +50,10 @@
         </a>
     </div>
 
-    {{-- Compliance sub-tabs (compliant = required reports submitted) --}}
+    {{-- Status sub-tabs --}}
     @php
         $subTabs = [
             null            => ['All', $counts['all']],
-            'compliant'     => ['Compliant', $counts['compliant']],
-            'non_compliant' => ['Non-Compliant', $counts['non_compliant']],
             'pending'       => ['Clubs with Pending Members', $counts['pending']],
         ];
     @endphp
@@ -107,16 +100,6 @@
                     @endif
                 </p>
                 <div class="flex items-center gap-1.5 mt-1.5 flex-wrap">
-                    @if($club->finalized_reports_count > 0)
-                        <span class="inline-flex items-center gap-1 bg-green-50 text-green-700 rounded-full px-2 py-0.5 text-[10px] font-semibold">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4.5 12.75l6 6 9-13.5"/></svg>
-                            Compliant
-                        </span>
-                    @else
-                        <span class="inline-flex items-center gap-1 bg-amber-50 text-amber-700 rounded-full px-2 py-0.5 text-[10px] font-semibold">
-                            No reports submitted
-                        </span>
-                    @endif
                     @if($club->pending_applications_count > 0)
                         <span class="inline-flex items-center gap-1 bg-[#F9A825]/15 text-[#8a5a00] rounded-full px-2 py-0.5 text-[10px] font-semibold">
                             {{ $club->pending_applications_count }} pending members{{ $club->pending_applications_count !== 1 ? 's' : '' }}

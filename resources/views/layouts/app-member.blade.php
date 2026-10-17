@@ -215,5 +215,7 @@
 
     <x-connection-status />
     <x-loading-overlay />
+    <x-flash-dialog />
+    <x-toast />
 </body>
 </html>

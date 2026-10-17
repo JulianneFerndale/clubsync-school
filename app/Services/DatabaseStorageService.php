@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\RegistrationDraft;
 use App\Models\Semester;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -95,7 +96,10 @@ class DatabaseStorageService
             ->where('created_at', '<', now()->subDays((int) config('retention.read_notification_days', 90)))
             ->delete();
 
-        return ['sessions' => $sessions, 'notifications' => $notifications];
+        // Registrations that never reached their proof of enrollment (RA 10173 storage limitation).
+        $drafts = RegistrationDraft::pruneExpired();
+
+        return ['sessions' => $sessions, 'notifications' => $notifications, 'registration_drafts' => $drafts];
     }
 
     /**

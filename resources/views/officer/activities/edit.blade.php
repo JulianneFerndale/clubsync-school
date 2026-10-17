@@ -17,11 +17,6 @@
 <div class="px-4 py-5">
 
     {{-- Validation errors --}}
-    @if($errors->any())
-        <div class="mb-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
-            {{ $errors->first() }}
-        </div>
-    @endif
 
     @if($event->approval_status === 'approved')
         <div class="mb-4 bg-[#F9A825]/10 border border-[#F9A825]/40 rounded-xl px-4 py-3">
@@ -110,13 +105,21 @@
             <select name="venue" required
                     class="w-full border rounded-xl px-4 py-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-[#07873e]/30
                            {{ $errors->has('venue') ? 'border-red-400' : 'border-gray-300' }}">
-                <option value="">Select a venue...</option>
+                <option value="">Select a room...</option>
+                {{-- Booked before the switch to main-campus rooms: keep it selectable so
+                     saving an edit does not silently move the activity. --}}
+                @if($event->venue && ! in_array($event->venue, $venues, true))
+                    <option value="{{ $event->venue }}" {{ old('venue', $event->venue) === $event->venue ? 'selected' : '' }}>
+                        {{ $event->venue }} (no longer on the room list)
+                    </option>
+                @endif
                 @foreach($venues as $venue)
                     <option value="{{ $venue }}" {{ old('venue', $event->venue) === $venue ? 'selected' : '' }}>
                         {{ $venue }}
                     </option>
                 @endforeach
             </select>
+            <p class="text-xs text-gray-400 mt-1">Main campus rooms only.</p>
             @error('venue')
                 <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
             @enderror

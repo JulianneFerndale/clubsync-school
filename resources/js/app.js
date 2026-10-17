@@ -30,12 +30,12 @@ if ('serviceWorker' in navigator) {
 
 // ── Turbo: let the browser handle file downloads natively ───────────────────
 // Turbo would otherwise try to "render" an attachment response. Any link to a
-// download route (…/download, …/letter, …/pdf, …/xlsx) is taken over the wire.
+// download route (…/download, …/letter, …/pdf, …/xlsx, …/receipt/…) is taken over the wire.
 document.addEventListener('turbo:click', (event) => {
     const url = event.detail?.url ?? event.target?.href ?? '';
     let path;
     try { path = new URL(url, window.location.href).pathname; } catch { return; }
-    if (/\/(download|letter|pdf|xlsx)(?:[/?]|$)/i.test(path)) {
+    if (/\/(download|letter|pdf|xlsx|receipt)(?:[/?]|$)/i.test(path)) {
         event.preventDefault();
         window.location.href = url; // native request → browser downloads the file
     }
@@ -56,6 +56,26 @@ const signedInUserId = () => parseInt(metaContent('cs-user-id'), 10) || 0;
 
 let liveUserId = 0;
 
+// ── When the live connection cannot be reached ──────────────────────────────
+// Not every deployment runs Reverb (the Render image has none, and a local run without
+// `composer run dev` has none either). Rather than going quiet, the page polls the
+// counts while its socket is down and toasts what arrived, so a notification still
+// reaches the person within half a minute. Polling stops once the socket connects.
+const POLL_MS = 30000;
+let pollTimer = null;
+let lastNotificationId = null; // newest one already on screen; null until first read
+
+function startPolling() {
+    if (pollTimer || !liveUserId) return;
+    resync(); // sets the baseline, so what was already there is not toasted
+    pollTimer = setInterval(resync, POLL_MS);
+}
+
+function stopPolling() {
+    clearInterval(pollTimer);
+    pollTimer = null;
+}
+
 function syncLiveUser() {
     const userId = signedInUserId();
     if (userId !== liveUserId) connectFor(userId);
@@ -67,9 +87,12 @@ function connectFor(userId) {
         window.Echo = null;
     }
     document.getElementById('cs-toast-host')?.remove();
+    stopPolling();
+    lastNotificationId = null;
     liveUserId = userId;
 
-    if (!userId || !reverbKey) return;
+    if (!userId) return;
+    if (!reverbKey) { startPolling(); return; }
 
     // Connect to Reverb relative to however this page was loaded, so the same
     // build works locally (http://…:8080) and behind an HTTPS tunnel/proxy
@@ -109,6 +132,7 @@ function connectFor(userId) {
 
     window.Echo.private(`notifications.${userId}`)
         .listen('.notification.created', (e) => {
+            lastNotificationId = Math.max(lastNotificationId ?? 0, e.id || 0);
             updateBadges('js-notif-badge', e.unread);
             showToast(e);
             scheduleLiveRefresh(e.club_id);
@@ -143,9 +167,13 @@ function connectFor(userId) {
 
     // A dropped connection loses every event sent while it was down. When it comes
     // back, re-read the counts and refresh what is on screen.
+    // While it cannot connect at all ('unavailable' after its retries, 'failed' when
+    // WebSockets are unsupported), fall back to polling until it does.
     let connectedOnce = false;
     window.Echo.connector.pusher.connection.bind('state_change', ({ current }) => {
+        if (current === 'unavailable' || current === 'failed') startPolling();
         if (current !== 'connected') return;
+        stopPolling();
         if (connectedOnce) resync();
         connectedOnce = true;
     });
@@ -154,6 +182,23 @@ function connectFor(userId) {
 // Turbo fires turbo:load for the first page and after every navigation.
 document.addEventListener('turbo:load', syncLiveUser);
 if (document.readyState !== 'loading') syncLiveUser();
+
+// ── Logging out in every tab ────────────────────────────────────────────────
+// Logging out in one tab ends the session for the whole browser, but another open
+// tab would still show the account and, over its live connection, keep receiving
+// that account's notifications. The page shown after logout (marked by
+// <meta name="cs-logged-out">, so the session is already gone) tells the others; they
+// drop the connection and go to the sign-in page. Telling them from the Logout click
+// was too early: they reached /login while still signed in and were sent back in.
+const authChannel = 'BroadcastChannel' in window ? new BroadcastChannel('clubsync-auth') : null;
+
+if (metaContent('cs-logged-out')) authChannel?.postMessage('logged-out');
+
+authChannel?.addEventListener('message', (event) => {
+    if (event.data !== 'logged-out' || !signedInUserId()) return;
+    connectFor(0); // disconnects from Reverb
+    window.location.replace('/login');
+});
 
 // ── Keeping badges honest ───────────────────────────────────────────────────
 // Back/Forward restores a cached copy of the page, with the counts it had then.
@@ -189,6 +234,17 @@ function resync() {
             if (!res.ok) return;
             const counts = await res.json();
             const shownNotifications = badgeValue('js-notif-badge');
+
+            // Toast a notification that arrived while no live event could (socket down,
+            // or it came in while the connection was dropped). The first read only sets
+            // the baseline, so what was already waiting is not re-announced.
+            const latestId = counts.latest?.id || 0;
+            if (lastNotificationId === null) {
+                lastNotificationId = latestId;
+            } else if (latestId > lastNotificationId) {
+                lastNotificationId = latestId;
+                showToast(counts.latest);
+            }
 
             updateBadges('js-notif-badge', counts.notifications);
             updateBadges('js-chat-badge', counts.chat);

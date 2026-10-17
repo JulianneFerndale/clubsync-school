@@ -7,12 +7,6 @@
 @section('content')
 <div id="chat-inbox" class="max-w-3xl mx-auto px-4 py-6 space-y-4">
 
-    @if(session('success'))
-        <div class="bg-green-50 border border-green-200 text-green-800 text-sm rounded-xl px-4 py-3">{{ session('success') }}</div>
-    @endif
-    @if($errors->any())
-        <div class="bg-red-50 border border-red-200 text-red-800 text-sm rounded-xl px-4 py-3">{{ $errors->first() }}</div>
-    @endif
 
     @if($conversations === null)
         {{-- First use: the notice must be read before chat opens (RA 10173 transparency). --}}

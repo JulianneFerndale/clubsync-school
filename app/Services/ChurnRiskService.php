@@ -72,7 +72,7 @@ class ChurnRiskService
             : collect();
 
         // ── Outstanding fees per member ──
-        $feeIds = Fee::where('club_id', $club->id)->pluck('id')->all();
+        $feeIds = Fee::where('club_id', $club->id)->notCancelled()->pluck('id')->all(); // a cancelled fee is owed by no one
         $unpaidByUser = $feeIds
             ? FeePayment::whereIn('fee_id', $feeIds)
                 ->whereIn('user_id', $userIds)

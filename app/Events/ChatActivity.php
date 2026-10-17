@@ -3,11 +3,11 @@
 namespace App\Events;
 
 use App\Models\ChatMessage;
+use App\Support\LiveBroadcast;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Foundation\Events\Dispatchable;
-use Illuminate\Support\Facades\Log;
 
 /**
  * Tell one user that something changed in one of their conversations.
@@ -56,11 +56,7 @@ class ChatActivity implements ShouldBroadcastNow
 
     private static function send(self $event): void
     {
-        try {
-            broadcast($event);
-        } catch (\Throwable $e) {
-            Log::warning('Chat broadcast failed: ' . $e->getMessage());
-        }
+        LiveBroadcast::send($event, 'Chat');
     }
 
     public function broadcastOn(): PrivateChannel

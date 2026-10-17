@@ -40,20 +40,10 @@ class Club extends Model
         return $this->hasMany(Announcement::class);
     }
 
-    public function chedReports(): HasMany
+    /** The semester-end reports the club's president has submitted to the DSA. */
+    public function reportSubmissions(): HasMany
     {
-        return $this->hasMany(ChedReport::class);
-    }
-
-    /** A club is "compliant" once it has at least one finalized (submitted) report. */
-    public function scopeCompliant($query)
-    {
-        return $query->whereHas('chedReports', fn ($q) => $q->where('is_finalized', true));
-    }
-
-    public function scopeNonCompliant($query)
-    {
-        return $query->whereDoesntHave('chedReports', fn ($q) => $q->where('is_finalized', true));
+        return $this->hasMany(ClubReportSubmission::class);
     }
 
     /** Clubs that have member registrations still awaiting the adviser's decision. */

@@ -22,19 +22,6 @@
 
 <div class="px-4 py-5 space-y-4 max-w-4xl">
 
-    @if(session('success'))
-        <div class="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-green-700 text-sm">{{ session('success') }}</div>
-    @endif
-    @if(session('info'))
-        <div class="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-blue-700 text-sm">{{ session('info') }}</div>
-    @endif
-    @if(session('error'))
-        <div class="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-600 text-sm">{{ session('error') }}</div>
-    @endif
-    @error('role')
-        <div class="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-600 text-sm">{{ $message }}</div>
-    @enderror
-
     {{-- Search --}}
     <form method="GET" action="{{ route('admin.users.index') }}" class="bg-white rounded-xl border border-gray-100 shadow-sm p-3">
         <div class="flex items-center gap-2">

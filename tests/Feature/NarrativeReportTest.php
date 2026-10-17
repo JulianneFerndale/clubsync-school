@@ -14,14 +14,20 @@ use App\Models\ClubOfficer;
 use App\Models\Semester;
 use App\Models\SemesterNarrativeReport;
 use App\Models\User;
+use App\Services\ActivityPhotoStorage;
 use App\Services\GeminiService;
+use App\Services\NarrativeDocuments\Document;
+use App\Services\NarrativeDocuments\DocumentBuilder;
+use App\Services\NarrativeDocuments\ReportDocuments;
 use App\Services\NarrativeReportData;
 use Carbon\Carbon;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Sleep;
 
 uses(RefreshDatabase::class);
 
@@ -32,6 +38,11 @@ uses(RefreshDatabase::class);
  * club summarising every activity it conducted, with each activity's details and its
  * attendance, and the report is handed to the DSA as a document after the adviser has
  * reviewed it. Gemini is faked throughout; the live run is logged in tests-logs.md.
+ *
+ * Since 2026-10-01 the report is the five DSA documents (accomplishment, minutes,
+ * financial, property inventory, communications), drafted section by section for each
+ * activity and handed over as Word files that also download as PDFs. Reports drafted
+ * before that ("legacy") keep their single narrative and PDF, and are tested as such.
  */
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -114,7 +125,7 @@ function nrActivity(Club $club, User $creator, array $overrides = []): ClubActiv
         'date'                  => today()->subDays(30)->toDateString(),
         'time_start'            => '08:00',
         'time_end'              => '11:00',
-        'venue'                 => 'SCC Gymnasium',
+        'venue'                 => 'AVR',
         'purpose'               => 'To orient members on the semester plan and ratify the committee heads.',
         'expected_participants' => 13,
         'activity_type'         => 'internal_meeting',
@@ -147,11 +158,11 @@ function nrCheckIn(ClubActivity $activity, int $count): array
 function nrSemesterOfActivities(Club $club, User $officer): array
 {
     $specs = [
-        ['BYTE Org 1st Semester General Assembly', 'internal_meeting', 60, '08:00', '11:00', 'SCC Gymnasium', 13, 11],
-        ['ACLE: Cybersecurity Awareness in Everyday Computing', 'acle', 50, '13:00', '16:00', 'Main AV Room', 12, 9],
-        ['Tech Week 2026 Planning Meeting', 'internal_meeting', 40, '15:00', '16:30', 'Function Hall', 10, 6],
-        ['Web Development Workshop: Building Your First Laravel App', 'campus_resource_use', 30, '09:00', '12:00', 'Main AV Room', 12, 10],
-        ['UI/UX Design Workshop with Figma', 'campus_resource_use', 20, '13:00', '16:00', 'Function Hall', 10, 7],
+        ['BYTE Org 1st Semester General Assembly', 'internal_meeting', 60, '08:00', '11:00', 'AVR', 13, 11],
+        ['ACLE: Cybersecurity Awareness in Everyday Computing', 'acle', 50, '13:00', '16:00', 'Moot Court', 12, 9],
+        ['Tech Week 2026 Planning Meeting', 'internal_meeting', 40, '15:00', '16:30', 'Library', 10, 6],
+        ['Web Development Workshop: Building Your First Laravel App', 'campus_resource_use', 30, '09:00', '12:00', 'Moot Court', 12, 10],
+        ['UI/UX Design Workshop with Figma', 'campus_resource_use', 20, '13:00', '16:00', 'Library', 10, 7],
     ];
 
     $activities = [];
@@ -213,6 +224,100 @@ function nrFaithfulNarrative(): string
         '"Web Development Workshop: Building Your First Laravel App" had 10 attendees of 12 expected.',
         '"UI/UX Design Workshop with Figma" had 7 attendees of 10 expected.',
     ]);
+}
+
+/** A complete Gemini answer for one activity's sections, as the JSON it is asked for. */
+function nrSections(array $overrides = []): string
+{
+    return json_encode(array_merge([
+        'introduction'    => 'The activity was held as recorded.',
+        'rationale'       => 'It was organised to serve the members.',
+        'minutes'         => 'Agenda: As planned.',
+        'recommendations' => '- Keep the attendance sheet.',
+    ], $overrides));
+}
+
+/** @return list<string> Every prompt sent to Gemini, in order. */
+function nrSentPrompts(): array
+{
+    return Http::recorded()
+        ->map(fn ($pair) => (string) data_get($pair[0]->data(), 'contents.0.parts.0.text', ''))
+        ->values()
+        ->all();
+}
+
+/** A five-document report with blank sections, made without Gemini. */
+function nrSectionReport(Club $club, Semester $semester): SemesterNarrativeReport
+{
+    $data  = NarrativeReportData::semester($club, $semester);
+    $blank = collect($data['activities'])
+        ->mapWithKeys(fn ($a) => [$a['id'] => array_fill_keys(array_keys(SemesterNarrativeReport::SECTIONS), '')])
+        ->all();
+
+    return SemesterNarrativeReport::create([
+        'club_id' => $club->id, 'semester_id' => $semester->id, 'activity_data' => $data,
+        'ai_sections' => $blank, 'sections' => $blank, 'ai_available' => false, 'status' => 'pending_review',
+    ]);
+}
+
+/** Sections for every activity of a report that say only what its records say. */
+function nrFaithfulSections(SemesterNarrativeReport $report): array
+{
+    return collect($report->activity_data['activities'])->mapWithKeys(fn ($a) => [$a['id'] => [
+        'introduction'    => $a['attendance_recorded']
+            ? "\"{$a['title']}\" had {$a['attended']} attendees of {$a['expected']} expected."
+            : "\"{$a['title']}\" was held; attendance was not recorded.",
+        'rationale'       => 'It was organised to serve the members.',
+        'minutes'         => $a['is_meeting'] ? 'Agenda: As planned.' : '',
+        'recommendations' => '- Keep the attendance sheet.',
+    ]])->all();
+}
+
+/** A report drafted before the five documents existed: one narrative, no sections. */
+function nrLegacyReport(Club $club, Semester $semester, string $content): SemesterNarrativeReport
+{
+    return SemesterNarrativeReport::create([
+        'club_id' => $club->id, 'semester_id' => $semester->id,
+        'activity_data' => NarrativeReportData::semester($club, $semester),
+        'draft_content' => $content, 'ai_available' => true, 'status' => 'pending_review',
+    ]);
+}
+
+/** A photo attached through the real storage path (re-encoded, filed, recorded). */
+function nrPhoto(ClubActivity $activity, User $officer, string $category, array $details = []): \App\Models\ActivityPhoto
+{
+    return app(ActivityPhotoStorage::class)->store(
+        UploadedFile::fake()->image('photo.jpg', 64, 48), $activity, ['category' => $category] + $details, $officer->id,
+    );
+}
+
+/** Every piece of text a document prints, one per line. */
+function nrDocumentText(Document $document): string
+{
+    $lines = [];
+
+    foreach ($document->blocks as $block) {
+        if ($block['type'] === 'paragraph') {
+            $lines[] = implode('', array_column($block['runs'], 'text'));
+        } elseif ($block['type'] === 'table') {
+            $lines[] = implode(' | ', array_column($block['columns'], 'label'));
+            foreach ([...$block['rows'], ...($block['total'] ? [$block['total']] : [])] as $row) {
+                $lines[] = implode(' | ', $row);
+            }
+            if ($block['rows'] === []) {
+                $lines[] = $block['empty'];
+            }
+        } elseif ($block['type'] === 'photos') {
+            $lines[] = $block['photos'] === [] ? $block['empty'] : implode(' | ', array_column($block['photos'], 'caption'));
+        } elseif ($block['type'] === 'cover') {
+            array_push($lines, $block['title'], implode('', array_column($block['term'], 'text')), (string) $block['year'], $block['club'], $block['date']);
+            foreach ($block['lines'] as $runs) {
+                $lines[] = implode('', array_column($runs, 'text'));
+            }
+        }
+    }
+
+    return implode("\n", $lines);
 }
 
 // ── Procedure 1 — one report at the end of the semester, covering every activity ──
@@ -404,6 +509,63 @@ it('P1: the semester page is DSA-only', function (string $role) {
     $this->withSession(nrSession(nrUser($role)))->get(route('dsa.semesters.index'))->assertForbidden();
 })->with(['member', 'adviser', 'president']);
 
+it('P1: concluding a running semester drafts the reports now, for adviser review, without moving its dates', function () {
+    nrFakeGemini();
+    [$club, $adviser, $officer] = nrClub();
+    [$idle] = nrClub('Club With Nothing Completed');
+    $semester = nrSemester(endedDaysAgo: -30);
+    nrActivity($club, $officer);
+    $dsa = nrUser('dsa');
+
+    $this->withSession(nrSession($dsa))->post(route('dsa.semesters.conclude', $semester))
+        ->assertRedirect(route('dsa.semesters.index'))
+        ->assertSessionHas('success');
+
+    $report = SemesterNarrativeReport::sole();
+
+    expect($report->club_id)->toBe($club->id)
+        ->and($report->status)->toBe('pending_review')
+        ->and(SemesterNarrativeReport::where('club_id', $idle->id)->exists())->toBeFalse()
+        ->and(ClubNotification::where('recipient_id', $adviser->id)->where('title', 'Semester narrative report ready for review')->exists())->toBeTrue()
+        ->and($semester->fresh()->end_date->toDateString())->toBe($semester->end_date->toDateString())
+        ->and(AuditLog::where('action', 'semester.concluded')->exists())->toBeTrue();
+});
+
+it('P1: concluding twice drafts no second report', function () {
+    nrFakeGemini();
+    [$club, , $officer] = nrClub();
+    $semester = nrSemester(endedDaysAgo: -30);
+    nrActivity($club, $officer);
+    $dsa = nrUser('dsa');
+
+    $this->withSession(nrSession($dsa))->post(route('dsa.semesters.conclude', $semester));
+    $this->withSession(nrSession($dsa))->post(route('dsa.semesters.conclude', $semester))
+        ->assertSessionHas('success', fn (string $message) => str_starts_with($message, 'Nothing to draft'));
+
+    expect(SemesterNarrativeReport::count())->toBe(1);
+});
+
+it('P1: a semester that has not started cannot be concluded', function () {
+    nrFakeGemini();
+    [$club, , $officer] = nrClub();
+    $semester = Semester::create([
+        'label' => 'Next Semester', 'start_date' => today()->addDays(10)->toDateString(),
+        'end_date' => today()->addDays(130)->toDateString(), 'is_current' => false,
+    ]);
+    nrActivity($club, $officer, ['date' => today()->addDays(20)->toDateString()]);
+
+    $this->withSession(nrSession(nrUser('dsa')))->post(route('dsa.semesters.conclude', $semester))
+        ->assertSessionHasErrors('semester');
+
+    expect(SemesterNarrativeReport::count())->toBe(0);
+});
+
+it('P1: only the DSA can conclude a semester', function (string $role) {
+    $semester = nrSemester(endedDaysAgo: -30);
+
+    $this->withSession(nrSession(nrUser($role)))->post(route('dsa.semesters.conclude', $semester))->assertForbidden();
+})->with(['member', 'adviser', 'president']);
+
 // ── Procedure 2 — each activity's details ────────────────────────────────────
 
 it("P2: sends every activity's title, type, date, time, venue, description and purpose to the AI", function () {
@@ -412,7 +574,7 @@ it("P2: sends every activity's title, type, date, time, venue, description and p
     $semester = nrSemester(endedDaysAgo: 1);
     nrActivity($club, $officer, [
         'title' => 'Web Development Workshop: Building Your First Laravel App', 'activity_type' => 'campus_resource_use',
-        'date' => '2026-09-08', 'time_start' => '09:00', 'time_end' => '12:00', 'venue' => 'Main AV Room',
+        'date' => '2026-09-08', 'time_start' => '09:00', 'time_end' => '12:00', 'venue' => 'Moot Court',
         'description' => 'Participants build a task-list app with Laravel.', 'purpose' => 'To give members practical web development experience.',
     ]);
 
@@ -424,7 +586,7 @@ it("P2: sends every activity's title, type, date, time, venue, description and p
         ->toContain('Type: Campus Resource Use')
         ->toContain('Date: September 8, 2026')
         ->toContain('Time: 9:00 AM to 12:00 PM')
-        ->toContain('Venue: Main AV Room')
+        ->toContain('Venue: Moot Court')
         ->toContain('Participants build a task-list app with Laravel.')
         ->toContain('To give members practical web development experience.');
 });
@@ -444,16 +606,31 @@ it('P2: reads PostgreSQL-style H:i:s times the same way', function () {
 });
 
 it('P2: does not store a draft that Gemini cut off, and flags it for a manual draft instead', function () {
-    nrFakeGemini('Building the Youth through Technology Education gathered at the Function Hall on September 17, 202', 'MAX_TOKENS');
+    nrFakeGemini(substr(nrSections(), 0, 60), 'MAX_TOKENS');
     [$club, , $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
-    nrActivity($club, $officer);
+    $activity = nrActivity($club, $officer);
 
     $report = nrGenerate($club, $semester);
 
-    expect($report->draft_content)->toBeNull()
+    // Not the partial answer: the activity starts from the template of its records instead.
+    expect($report->draftSource($activity->id))->toBe('template')
+        ->and($report->section($activity->id, 'introduction'))->toStartWith('"' . $activity->title . '" (')
         ->and($report->ai_available)->toBeFalse()
         ->and($report->status)->toBe('pending_review');
+});
+
+it('P2: discards an answer that is not the complete set of sections', function () {
+    nrFakeGemini(json_encode(['introduction' => 'Only an introduction.']));
+    [$club, , $officer] = nrClub();
+    $semester = nrSemester(endedDaysAgo: 1);
+    $activity = nrActivity($club, $officer);
+
+    $report = nrGenerate($club, $semester);
+
+    expect($report->draftSource($activity->id))->toBe('template')
+        ->and($report->section($activity->id, 'introduction'))->not->toBe('Only an introduction.')
+        ->and($report->ai_available)->toBeFalse();
 });
 
 it('P2: the per-activity bulletin recap also rejects a cut-off draft', function () {
@@ -470,16 +647,18 @@ it('P2: the per-activity bulletin recap also rejects a cut-off draft', function 
 });
 
 it('P2: joins an answer split across parts and skips thought summaries', function () {
+    $json = nrSections(['introduction' => 'First paragraph. Second paragraph.']);
+    $cut  = strpos($json, 'Second');
     nrFakeGemini(parts: [
         ['text' => 'Planning the answer...', 'thought' => true],
-        ['text' => 'First paragraph. '],
-        ['text' => 'Second paragraph.'],
+        ['text' => substr($json, 0, $cut)],
+        ['text' => substr($json, $cut)],
     ]);
     [$club, , $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
-    nrActivity($club, $officer);
+    $activity = nrActivity($club, $officer);
 
-    expect(nrGenerate($club, $semester)->draft_content)->toBe('First paragraph. Second paragraph.');
+    expect(nrGenerate($club, $semester)->section($activity->id, 'introduction'))->toBe('First paragraph. Second paragraph.');
 });
 
 it('P2: leaves the model room to finish even if it thinks first', function () {
@@ -490,6 +669,35 @@ it('P2: leaves the model room to finish even if it thinks first', function () {
     app(GeminiService::class)->draftClubNarrative($activity, $club);
 
     Http::assertSent(fn ($request) => data_get($request->data(), 'generationConfig.maxOutputTokens') >= 2048);
+});
+
+it('P2: asks for the sections as JSON, one request per activity', function () {
+    nrFakeGemini(nrSections());
+    [$club, , $officer] = nrClub();
+    $semester = nrSemester(endedDaysAgo: 1);
+    nrSemesterOfActivities($club, $officer);
+
+    nrGenerate($club, $semester);
+
+    Http::assertSentCount(5);
+    Http::assertSent(fn ($request) => data_get($request->data(), 'generationConfig.responseMimeType') === 'application/json'
+        && data_get($request->data(), 'generationConfig.responseSchema.required') === ['introduction', 'rationale', 'minutes', 'recommendations']);
+});
+
+it('P2: asks for minutes only for meetings, and keeps none for other activities', function () {
+    nrFakeGemini(nrSections(['minutes' => 'Agenda: Plans.']));
+    [$club, , $officer] = nrClub();
+    $semester = nrSemester(endedDaysAgo: 1);
+    $meeting = nrActivity($club, $officer, ['title' => 'Planning Meeting', 'activity_type' => 'internal_meeting']);
+    $acle    = nrActivity($club, $officer, ['title' => 'ACLE: Chess Strategy', 'activity_type' => 'acle']);
+
+    $report  = nrGenerate($club, $semester);
+    $prompts = nrSentPrompts();
+
+    expect(collect($prompts)->first(fn ($p) => str_contains($p, 'Planning Meeting')))->toContain('"Proceedings:"')
+        ->and(collect($prompts)->first(fn ($p) => str_contains($p, 'ACLE: Chess Strategy')))->toContain('an empty string, because this activity was not a meeting')
+        ->and($report->section($meeting->id, 'minutes'))->toBe('Agenda: Plans.')
+        ->and($report->section($acle->id, 'minutes'))->toBe('');
 });
 
 // ── Procedure 3 — expected participants and actual attendees ─────────────────
@@ -509,23 +717,23 @@ it('P3: counts attendees from the attendance sheet, not the club roster', functi
     expect($facts['attended'])->toBe(9)
         ->and($facts['expected'])->toBe(12)
         ->and($facts['turnout'])->toBe(75.0)
-        ->and($facts['attendance_recorded'])->toBeTrue();
+        ->and($facts['attendance_recorded'])->toBeTrue()
+        ->and($facts['attendees'])->toHaveCount(9);
 });
 
-it("P3: puts each activity's expected and actual attendance in the prompt", function () {
-    nrFakeGemini();
+it("P3: puts each activity's expected and actual attendance in its prompt", function () {
+    nrFakeGemini(nrSections());
     [$club, , $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
     nrSemesterOfActivities($club, $officer);
 
     nrGenerate($club, $semester);
-    $prompt = nrSentPrompt();
+    $prompts = implode("\n----\n", nrSentPrompts());
 
-    expect($prompt)
+    expect($prompts)
         ->toContain("Expected participants: 12\nActual attendees (from the attendance record): 9 (75% of expected)")
         ->toContain("Expected participants: 13\nActual attendees (from the attendance record): 11 (84.6% of expected)")
-        ->toContain('Total attendance across all activities: 43 check-ins by 43 different members')
-        ->toContain('Total expected participants across all activities: 57 (overall turnout 75.4% of expected)');
+        ->toContain('Activity 2 of 5 completed this semester');
 });
 
 it('P3: totals count a member who attended several activities once', function () {
@@ -564,14 +772,27 @@ it('P3: the bulletin recap prompt carries the attendance too', function () {
     expect(nrSentPrompt())->toContain("Expected participants: 10\nActual attendees (from the attendance record): 6 (60% of expected)");
 });
 
-it("P3: warns the adviser when the narrative leaves out an activity's attendance", function () {
-    nrFakeGemini();
+it("P3: warns the adviser when an introduction leaves out the activity's attendance", function () {
     [$club, , $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
     nrSemesterOfActivities($club, $officer);
-    $report = nrGenerate($club, $semester);
+    $report   = nrSectionReport($club, $semester);
+    $sections = nrFaithfulSections($report);
+    $figma    = collect($report->activity_data['activities'])->firstWhere('title', 'UI/UX Design Workshop with Figma');
 
-    $report->update(['adviser_edited_content' => str_replace(' with 7 attendees of 10 expected', '', str_replace('had 7 attendees of 10 expected', 'was held', nrFaithfulNarrative()))]);
+    $sections[$figma['id']]['introduction'] = '"UI/UX Design Workshop with Figma" was held in the Library.';
+    $report->update(['sections' => $sections]);
+
+    expect($report->reviewWarnings())->toBe([
+        'The introduction for "UI/UX Design Workshop with Figma" does not state its attendance (7 attended of 10 expected).',
+    ]);
+});
+
+it("P3: a legacy narrative is still checked for each activity's attendance", function () {
+    [$club, , $officer] = nrClub();
+    $semester = nrSemester(endedDaysAgo: 1);
+    nrSemesterOfActivities($club, $officer);
+    $report = nrLegacyReport($club, $semester, str_replace('had 7 attendees of 10 expected', 'was held', nrFaithfulNarrative()));
 
     expect($report->reviewWarnings())->toBe([
         'The narrative does not state the attendance for "UI/UX Design Workshop with Figma" (7 attended of 10 expected).',
@@ -581,7 +802,7 @@ it("P3: warns the adviser when the narrative leaves out an activity's attendance
 // ── Procedure 4 — grounded in the records ────────────────────────────────────
 
 it('P4: tells the model the plans were written before the activity and must not be reported as results', function () {
-    nrFakeGemini();
+    nrFakeGemini(nrSections());
     [$club, , $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
     nrActivity($club, $officer);
@@ -597,7 +818,7 @@ it('P4: tells the model the plans were written before the activity and must not 
 });
 
 it("P4: lets the officer's post-activity report be used as the source of outcomes", function () {
-    nrFakeGemini();
+    nrFakeGemini(nrSections());
     [$club, , $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
     nrActivity($club, $officer, ['post_report_content' => 'Members elected four committee heads.']);
@@ -617,48 +838,82 @@ it('P4: the bulletin recap is written under the same accuracy rules', function (
     expect(nrSentPrompt())->toContain('Never state that an objective was achieved');
 });
 
-it('P4: raises no warnings for a narrative that matches the records', function () {
-    nrFakeGemini(nrFaithfulNarrative());
+it('P4: raises no warnings for sections that match the records', function () {
     [$club, , $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
     nrSemesterOfActivities($club, $officer);
+    $report = nrSectionReport($club, $semester);
+    $report->update(['sections' => nrFaithfulSections($report)]);
 
-    expect(nrGenerate($club, $semester)->reviewWarnings())->toBe([]);
+    expect($report->reviewWarnings())->toBe([]);
 });
 
-it('P4: flags figures that appear nowhere in the records', function () {
-    nrFakeGemini(nrFaithfulNarrative() . "\n\nOver 150 students benefited, and 98% rated the workshops highly.");
+it("P4: flags figures that appear nowhere in an activity's records", function () {
     [$club, , $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
     nrSemesterOfActivities($club, $officer);
+    $report   = nrSectionReport($club, $semester);
+    $sections = nrFaithfulSections($report);
+    $acle     = collect($report->activity_data['activities'])->firstWhere('title', 'ACLE: Cybersecurity Awareness in Everyday Computing');
 
-    expect(nrGenerate($club, $semester)->reviewWarnings())
-        ->toBe(['These figures do not appear in the activity records: 150, 98.']);
+    $sections[$acle['id']]['recommendations'] = '- Over 150 students benefited, and 98% rated it highly.';
+    $report->update(['sections' => $sections]);
+
+    expect($report->reviewWarnings())
+        ->toBe(['These figures for "ACLE: Cybersecurity Awareness in Everyday Computing" do not appear in its records: 150, 98.']);
 });
 
-it('P4: flags an activity the narrative never mentions', function () {
-    nrFakeGemini(str_replace("\n\n" . '"Tech Week 2026 Planning Meeting" had 6 attendees of 10 expected.', '', nrFaithfulNarrative()));
+it('P4: accepts figures from the receipts and budget the officers attached', function () {
+    Storage::fake('local');
     [$club, , $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
-    nrSemesterOfActivities($club, $officer);
+    $activity = nrActivity($club, $officer, ['budget_amount' => 1500]);
+    nrPhoto($activity, $officer, 'receipt', ['caption' => 'Tarpaulin', 'amount' => 450]);
+    $report   = nrSectionReport($club, $semester);
+    $sections = nrFaithfulSections($report);
 
-    expect(nrGenerate($club, $semester)->reviewWarnings())
-        ->toBe(['The narrative does not mention "Tech Week 2026 Planning Meeting".']);
+    $sections[$activity->id]['rationale'] = 'Of the PHP 1,500.00 budget, receipts for PHP 450.00 were attached.';
+    $report->update(['sections' => $sections]);
+
+    expect($report->reviewWarnings())->toBe([]);
 });
 
-it('P4: accepts one clear part of a two-part title as a mention', function () {
-    nrFakeGemini(str_replace('"ACLE: Cybersecurity Awareness in Everyday Computing"', 'The ACLE on Cybersecurity Awareness in Everyday Computing', nrFaithfulNarrative()));
+it('P4: flags an empty section', function () {
+    [$club, , $officer] = nrClub();
+    $semester = nrSemester(endedDaysAgo: 1);
+    $meeting  = nrActivity($club, $officer, ['title' => 'Officers Planning Meeting']);
+    $report   = nrSectionReport($club, $semester);
+    $sections = nrFaithfulSections($report);
+
+    $sections[$meeting->id]['minutes'] = '';
+    $report->update(['sections' => $sections]);
+
+    expect($report->reviewWarnings())->toBe(['Minutes of the meeting for "Officers Planning Meeting" is empty.']);
+});
+
+it('P4: a legacy narrative is still checked for figures and missing activities', function () {
     [$club, , $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
     nrSemesterOfActivities($club, $officer);
 
-    expect(nrGenerate($club, $semester)->reviewWarnings())->toBe([]);
+    $faithful   = nrLegacyReport($club, $semester, nrFaithfulNarrative());
+    $inflated   = nrLegacyReport(nrClub()[0], $semester, nrFaithfulNarrative() . "\n\nOver 150 students benefited, and 98% rated the workshops highly.");
+    $inflated->update(['activity_data' => $faithful->activity_data]);
+    $incomplete = nrLegacyReport(nrClub()[0], $semester, str_replace("\n\n" . '"Tech Week 2026 Planning Meeting" had 6 attendees of 10 expected.', '', nrFaithfulNarrative()));
+    $incomplete->update(['activity_data' => $faithful->activity_data]);
+    $twoPart    = nrLegacyReport(nrClub()[0], $semester, str_replace('"ACLE: Cybersecurity Awareness in Everyday Computing"', 'The ACLE on Cybersecurity Awareness in Everyday Computing', nrFaithfulNarrative()));
+    $twoPart->update(['activity_data' => $faithful->activity_data]);
+
+    expect($faithful->reviewWarnings())->toBe([])
+        ->and($inflated->fresh()->reviewWarnings())->toBe(['These figures do not appear in the activity records: 150, 98.'])
+        ->and($incomplete->fresh()->reviewWarnings())->toBe(['The narrative does not mention "Tech Week 2026 Planning Meeting".'])
+        ->and($twoPart->fresh()->reviewWarnings())->toBe([]);
 });
 
 // ── Procedure 5 — held for the adviser (regression for the new report) ──────
 
 it('P5: holds the drafted report for the adviser and tells only the adviser', function () {
-    nrFakeGemini();
+    nrFakeGemini(nrSections());
     [$club, $adviser, $officer] = nrClub();
     $dsa = nrUser('dsa');
     $semester = nrSemester(endedDaysAgo: 1);
@@ -668,14 +923,14 @@ it('P5: holds the drafted report for the adviser and tells only the adviser', fu
 
     expect($report->status)->toBe('pending_review')
         ->and($report->submitted_at)->toBeNull()
-        ->and($report->pdf_path)->toBeNull()
+        ->and($report->isLegacy())->toBeFalse()
         ->and(ClubNotification::where('recipient_id', $adviser->id)->where('title', 'Semester narrative report ready for review')->exists())->toBeTrue()
         ->and(ClubNotification::where('recipient_id', $dsa->id)->exists())->toBeFalse()
         ->and(AuditLog::where('action', 'ai.semester_report.generated')->where('resource_id', $report->id)->exists())->toBeTrue();
 });
 
 it('P5: keeps an unsubmitted report away from the DSA', function () {
-    nrFakeGemini();
+    nrFakeGemini(nrSections());
     [$club, , $officer] = nrClub();
     $dsa = nrUser('dsa');
     $semester = nrSemester(endedDaysAgo: 1);
@@ -686,40 +941,43 @@ it('P5: keeps an unsubmitted report away from the DSA', function () {
         ->assertOk()->assertDontSee($club->name);
 
     $this->withSession(nrSession($dsa))->get(route('dsa.semester-reports.pdf', $report))->assertNotFound();
+    $this->withSession(nrSession($dsa))->get(route('dsa.semester-reports.document', [$report, 'accomplishment', 'docx']))->assertNotFound();
+    $this->withSession(nrSession($dsa))->get(route('dsa.semester-reports.bundle', $report))->assertNotFound();
 });
 
 it('P5: refuses the adviser of another club', function () {
-    nrFakeGemini();
+    nrFakeGemini(nrSections());
     [$club, , $officer] = nrClub();
     [, $otherAdviser] = nrClub('Chess Club');
     $semester = nrSemester(endedDaysAgo: 1);
-    nrActivity($club, $officer);
+    $activity = nrActivity($club, $officer);
     $report = nrGenerate($club, $semester);
 
     $this->withSession(nrSession($otherAdviser))->get(route('adviser.semester-reports.show', $report))->assertForbidden();
+    $this->withSession(nrSession($otherAdviser))->get(route('adviser.semester-reports.document', [$report, 'minutes', 'pdf']))->assertForbidden();
     $this->withSession(nrSession($otherAdviser))->patch(route('adviser.semester-reports.update', $report), [
-        'content' => nrFaithfulNarrative(), 'intent' => 'submit',
+        'sections' => [$activity->id => ['introduction' => 'Hijacked.']], 'intent' => 'submit',
     ])->assertForbidden();
 
     expect($report->fresh()->status)->toBe('pending_review');
 });
 
 it('P5: gives officers and members no way to submit the report', function (string $role) {
-    nrFakeGemini();
+    nrFakeGemini(nrSections());
     [$club, , $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
-    nrActivity($club, $officer);
+    $activity = nrActivity($club, $officer);
     $report = nrGenerate($club, $semester);
 
     $this->withSession(nrSession($role === 'president' ? $officer : nrUser($role)))
-        ->patch(route('adviser.semester-reports.update', $report), ['content' => nrFaithfulNarrative(), 'intent' => 'submit'])
+        ->patch(route('adviser.semester-reports.update', $report), ['sections' => [$activity->id => ['introduction' => 'x']], 'intent' => 'submit'])
         ->assertForbidden();
 
     expect($report->fresh()->status)->toBe('pending_review');
 })->with(['president', 'member']);
 
 it('P5: holds the report and alerts the DSA when the club has no adviser', function () {
-    nrFakeGemini();
+    nrFakeGemini(nrSections());
     [$club, , $officer] = nrClub();
     $club->update(['adviser_id' => null]);
     $dsa = nrUser('dsa');
@@ -732,11 +990,11 @@ it('P5: holds the report and alerts the DSA when the club has no adviser', funct
         ->and(ClubNotification::where('recipient_id', $dsa->id)->where('title', 'Semester narrative report held: no adviser')->exists())->toBeTrue();
 });
 
-// ── Procedure 6 — a document handed over to the DSA ──────────────────────────
+// ── Procedure 6 — the documents handed over to the DSA ───────────────────────
 
-it('P6: submitting the report produces a PDF, marks it submitted, and notifies the DSA', function () {
+it('P6: submitting writes the five Word files, marks the report submitted, and notifies the DSA', function () {
     Storage::fake('local');
-    nrFakeGemini(nrFaithfulNarrative());
+    nrFakeGemini(nrSections());
     [$club, $adviser, $officer] = nrClub();
     $dsa = nrUser('dsa');
     $semester = nrSemester(endedDaysAgo: 1);
@@ -744,7 +1002,7 @@ it('P6: submitting the report produces a PDF, marks it submitted, and notifies t
     $report = nrGenerate($club, $semester);
 
     $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), [
-        'content' => nrFaithfulNarrative(), 'intent' => 'submit',
+        'sections' => nrFaithfulSections($report), 'intent' => 'submit',
     ])->assertRedirect(route('adviser.semester-reports.show', $report));
 
     $report->refresh();
@@ -752,16 +1010,20 @@ it('P6: submitting the report produces a PDF, marks it submitted, and notifies t
     expect($report->status)->toBe('submitted')
         ->and($report->reviewed_by)->toBe($adviser->id)
         ->and($report->submitted_at)->not->toBeNull()
-        ->and($report->adviser_edited_content)->toBeNull()
-        ->and(Storage::disk('local')->exists($report->pdf_path))->toBeTrue()
-        ->and(Storage::disk('local')->get($report->pdf_path))->toStartWith('%PDF')
+        ->and($report->sectionsEdited())->toBeTrue()
         ->and(ClubNotification::where('recipient_id', $dsa->id)->where('title', 'Semester narrative report submitted')->exists())->toBeTrue()
         ->and(AuditLog::where('action', 'semester_report.submitted')->where('resource_id', $report->id)->exists())->toBeTrue();
+
+    foreach (['accomplishment', 'minutes', 'financial', 'inventory', 'communications'] as $document) {
+        $path = $report->documentDirectory() . "/{$document}.docx";
+        expect(Storage::disk('local')->exists($path))->toBeTrue()
+            ->and(Storage::disk('local')->get($path))->toStartWith('PK');
+    }
 });
 
-it('P6: the DSA sees the submitted report and downloads the PDF', function () {
+it('P6: the DSA downloads the complete report as a PDF, and each document as Word or PDF', function () {
     Storage::fake('local');
-    nrFakeGemini(nrFaithfulNarrative());
+    nrFakeGemini(nrSections());
     [$club, $adviser, $officer] = nrClub();
     $dsa = nrUser('dsa');
     $semester = nrSemester(endedDaysAgo: 1);
@@ -769,94 +1031,152 @@ it('P6: the DSA sees the submitted report and downloads the PDF', function () {
     $report = nrGenerate($club, $semester);
 
     $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), [
-        'content' => nrFaithfulNarrative(), 'intent' => 'submit',
+        'sections' => nrFaithfulSections($report), 'intent' => 'submit',
     ]);
 
     $this->withSession(nrSession($dsa))->get(route('dsa.semester-reports.index'))
-        ->assertOk()->assertSee($club->name)->assertSee('1st Semester 2026-2027');
+        ->assertOk()->assertSee($club->name)->assertSee('1st Semester 2026-2027')->assertSee('Complete report (PDF)');
 
-    $download = $this->withSession(nrSession($dsa))->get(route('dsa.semester-reports.pdf', $report));
+    $pdf = $this->withSession(nrSession($dsa))->get(route('dsa.semester-reports.pdf', $report));
+    $pdf->assertOk()->assertDownload("{$club->acronym} - Semester Narrative Report - 1st Semester 2026-2027.pdf");
+    expect($pdf->getContent())->toStartWith('%PDF');
 
-    $download->assertOk()->assertDownload(strtolower($club->acronym) . '-1st-semester-2026-2027-narrative-report.pdf');
+    $docx = $this->withSession(nrSession($dsa))->get(route('dsa.semester-reports.document', [$report, 'minutes', 'docx']));
+    $docx->assertOk()->assertDownload("{$club->acronym} - Minutes of Meetings - 1st Semester 2026-2027.docx");
+    expect($docx->getContent())->toBe(Storage::disk('local')->get($report->fresh()->documentDirectory() . '/minutes.docx'));
+
+    $zip = $this->withSession(nrSession($dsa))->get(route('dsa.semester-reports.bundle', $report));
+    $zip->assertOk();
+    expect($zip->getContent())->toStartWith('PK');
 });
 
-it('P6: the document carries the narrative, every activity, and its attendance', function () {
-    nrFakeGemini(nrFaithfulNarrative());
-    [$club, $adviser, $officer] = nrClub();
+it('P6: the documents carry every activity, its attendance list and the reviewed sections', function () {
+    nrFakeGemini(nrSections());
+    [$club, , $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
+    $semester->update(['term' => 'first', 'academic_year' => '2026-2027']);
     nrSemesterOfActivities($club, $officer);
     $report = nrGenerate($club, $semester);
-    $report->update(['status' => 'submitted', 'submitted_at' => now()]);
+    $report->update(['sections' => nrFaithfulSections($report)]);
 
-    $html = view('reports.semester-narrative-pdf', [
-        'report'     => $report,
-        'data'       => $report->activity_data,
-        'paragraphs' => preg_split('/\n\s*\n/', $report->finalContent()),
-        'reviewer'   => $adviser,
-    ])->render();
+    $builder        = new DocumentBuilder($report);
+    $accomplishment = nrDocumentText($builder->build('accomplishment'));
+    $minutes        = nrDocumentText($builder->build('minutes'));
 
-    expect($html)
-        ->toContain('Semester Narrative Report')
-        ->toContain('Director of Student Affairs')
-        ->toContain('The club completed 5 activities this semester')
+    expect($accomplishment)
+        ->toContain('ACCOMPLISHMENT & DOCUMENTATION REPORT')
+        ->toContain('1st SEMESTER')
+        ->toContain('S.Y 2026-2027')
+        ->toContain($club->name)
+        ->toContain('1. BYTE Org 1st Semester General Assembly')
         ->toContain('ACLE: Cybersecurity Awareness in Everyday Computing')
-        ->toContain('ACLE (Alternative Classroom Learning Experience)')
-        ->toContain('1:00 PM to 4:00 PM')
-        ->toContain('Main AV Room')
-        ->toContain('Purpose of UI/UX Design Workshop with Figma.')
-        ->toContain('<td class="num">12</td>')
-        ->toContain('<td class="num">9</td>')
-        ->toContain('<td class="num">75%</td>')
-        ->toContain('<td class="num">43</td>')
-        ->toContain($adviser->name);
+        ->toContain('"ACLE: Cybersecurity Awareness in Everyday Computing" had 9 attendees of 12 expected.')
+        ->toContain('9 of 12 expected participants attended')
+        ->toContain('ANNEX A')->toContain('ANNEX F')
+        ->toContain('SUMMARY RECOMMENDATIONS:')
+        ->and($minutes)
+        ->toContain('Tech Week 2026 Planning Meeting')
+        ->not->toContain('Web Development Workshop');
 });
 
-it("P6: saving keeps the report with the adviser — no document, no DSA notice", function () {
+it('P6: every document carries the SCC banner, the GSC and SCC logos and the club logo', function () {
+    Storage::fake('public');
+    Storage::disk('public')->put('clubs/logos/nr.png', base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='));
+    nrFakeGemini(nrSections());
+    [$club, , $officer] = nrClub();
+    $club->update(['profile_photo_url' => '/storage/clubs/logos/nr.png']);
+    $semester = nrSemester(endedDaysAgo: 1);
+    nrActivity($club, $officer);
+    $report = nrGenerate($club, $semester)->load('club');
+
+    $docx = app(ReportDocuments::class)->document($report, 'accomplishment', 'docx')['bytes'];
+    $zip  = new ZipArchive();
+    $file = tempnam(sys_get_temp_dir(), 'nr');
+    file_put_contents($file, $docx);
+    $zip->open($file);
+
+    $media = [];
+    for ($i = 0; $i < $zip->numFiles; $i++) {
+        if (str_starts_with($zip->getNameIndex($i), 'word/media/')) {
+            $media[] = $zip->getNameIndex($i);
+        }
+    }
+    $header = $zip->getFromName('word/header1.xml');
+    $zip->close();
+    @unlink($file);
+
+    // Banner (header), GSC logo, SCC seal and the club's logo.
+    expect($media)->toHaveCount(4)
+        ->and($header)->toContain('behindDoc="1"')->toContain('Saint Columban College banner');
+});
+
+it("P6: saving keeps the report with the adviser — no documents, no DSA notice", function () {
     Storage::fake('local');
-    nrFakeGemini('A draft the adviser will rework.');
+    nrFakeGemini(nrSections());
     [$club, $adviser, $officer] = nrClub();
     $dsa = nrUser('dsa');
     $semester = nrSemester(endedDaysAgo: 1);
-    nrActivity($club, $officer);
+    $activity = nrActivity($club, $officer);
     $report = nrGenerate($club, $semester);
 
     $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), [
-        'content' => 'An edited narrative that the adviser is still working on.', 'intent' => 'save',
+        'sections' => [$activity->id => ['introduction' => 'An introduction the adviser is still working on.']], 'intent' => 'save',
     ]);
 
     $report->refresh();
 
     expect($report->status)->toBe('pending_review')
-        ->and($report->adviser_edited_content)->toBe('An edited narrative that the adviser is still working on.')
-        ->and($report->pdf_path)->toBeNull()
+        ->and($report->section($activity->id, 'introduction'))->toBe('An introduction the adviser is still working on.')
+        ->and($report->section($activity->id, 'rationale'))->toBe('It was organised to serve the members.')
+        ->and($report->ai_sections[$activity->id]['introduction'])->toBe('The activity was held as recorded.')
+        ->and(Storage::disk('local')->exists($report->documentDirectory()))->toBeFalse()
         ->and(ClubNotification::where('recipient_id', $dsa->id)->exists())->toBeFalse();
+});
+
+it('P6: the adviser previews each document before submitting', function () {
+    nrFakeGemini(nrSections());
+    [$club, $adviser, $officer] = nrClub();
+    $semester = nrSemester(endedDaysAgo: 1);
+    nrActivity($club, $officer);
+    $report = nrGenerate($club, $semester);
+
+    $this->withSession(nrSession($adviser))->get(route('adviser.semester-reports.show', $report))
+        ->assertOk()->assertSee('The five DSA documents')->assertSee('Property Inventory Report');
+
+    $preview = $this->withSession(nrSession($adviser))->get(route('adviser.semester-reports.document', [$report, 'financial', 'docx']));
+
+    $preview->assertOk();
+    expect($preview->headers->get('Content-Type'))->toBe('application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+        ->and($preview->getContent())->toStartWith('PK');
 });
 
 it('P6: a submitted report cannot be changed', function () {
     Storage::fake('local');
-    nrFakeGemini(nrFaithfulNarrative());
+    nrFakeGemini(nrSections());
     [$club, $adviser, $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
-    nrActivity($club, $officer);
+    $activity = nrActivity($club, $officer);
     $report = nrGenerate($club, $semester);
 
-    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), ['content' => nrFaithfulNarrative(), 'intent' => 'submit']);
-    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), ['content' => 'Rewritten after submission, which must not stick.', 'intent' => 'save'])
-        ->assertSessionHasErrors('status');
+    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), ['sections' => nrFaithfulSections($report), 'intent' => 'submit']);
+    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), [
+        'sections' => [$activity->id => ['introduction' => 'Rewritten after submission, which must not stick.']], 'intent' => 'save',
+    ])->assertSessionHasErrors('status');
 
-    expect($report->fresh()->finalContent())->toBe(nrFaithfulNarrative());
+    expect($report->fresh()->section($activity->id, 'introduction'))->not->toContain('Rewritten after submission');
 });
 
-it('P6: will not submit an empty narrative', function () {
+it('P6: will not submit an activity without its introduction', function () {
     Storage::fake('local');
-    nrFakeGemini();
+    nrFakeGemini(nrSections());
     [$club, $adviser, $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
-    nrActivity($club, $officer);
+    $activity = nrActivity($club, $officer);
     $report = nrGenerate($club, $semester);
 
-    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), ['content' => '', 'intent' => 'submit'])
-        ->assertSessionHasErrors('content');
+    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), [
+        'sections' => [$activity->id => ['introduction' => '']], 'intent' => 'submit',
+    ])->assertSessionHasErrors('status');
 
     expect($report->fresh()->status)->toBe('pending_review');
 });
@@ -867,24 +1187,641 @@ it('P6: with Gemini unavailable the report is still created and the adviser can 
     Http::fake();
     [$club, $adviser, $officer] = nrClub();
     $semester = nrSemester(endedDaysAgo: 1);
-    nrActivity($club, $officer);
+    $activity = nrActivity($club, $officer);
 
     $report = nrGenerate($club, $semester);
 
     expect($report->ai_available)->toBeFalse()
-        ->and($report->draft_content)->toBeNull();
+        ->and($report->draftSource($activity->id))->toBe('template');
 
     $this->withSession(nrSession($adviser))->get(route('adviser.semester-reports.show', $report))
-        ->assertOk()->assertSee('AI Unavailable — Manual Draft Required');
+        ->assertOk()->assertSee('AI Unavailable — Manual Draft Required')->assertSee('Template draft')
+        ->assertDontSee('Draft with AI');
 
     $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), [
-        'content' => 'The club held its general assembly this semester, with its attendance recorded below.', 'intent' => 'submit',
+        'sections' => [$activity->id => [
+            'introduction' => 'The club held its general assembly this semester.',
+            'rationale'    => 'It was planned to orient the members.',
+        ]],
+        'intent' => 'submit',
     ]);
 
     expect($report->fresh()->status)->toBe('submitted');
     Http::assertNothingSent();
 });
 
+it('P6: a legacy report is still submitted as its single narrative PDF', function () {
+    Storage::fake('local');
+    [$club, $adviser, $officer] = nrClub();
+    $dsa = nrUser('dsa');
+    $semester = nrSemester(endedDaysAgo: 1);
+    nrSemesterOfActivities($club, $officer);
+    $report = nrLegacyReport($club, $semester, nrFaithfulNarrative());
+
+    $this->withSession(nrSession($adviser))->get(route('adviser.semester-reports.show', $report))
+        ->assertOk()->assertSee('Narrative')->assertDontSee('The five DSA documents');
+
+    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), [
+        'content' => nrFaithfulNarrative(), 'intent' => 'submit',
+    ])->assertRedirect(route('adviser.semester-reports.show', $report));
+
+    $report->refresh();
+
+    expect($report->status)->toBe('submitted')
+        ->and(Storage::disk('local')->get($report->pdf_path))->toStartWith('%PDF');
+
+    $this->withSession(nrSession($dsa))->get(route('dsa.semester-reports.pdf', $report))
+        ->assertOk()->assertDownload(strtolower($club->acronym) . '-1st-semester-2026-2027-narrative-report.pdf');
+    $this->withSession(nrSession($dsa))->get(route('dsa.semester-reports.document', [$report, 'minutes', 'docx']))->assertNotFound();
+});
+
 it('P6: only the DSA can open the submitted reports list', function (string $role) {
     $this->withSession(nrSession(nrUser($role)))->get(route('dsa.semester-reports.index'))->assertForbidden();
 })->with(['member', 'adviser', 'president']);
+
+// ── Procedure 7 — Gemini retries, the DSA returns a report, the AI redrafts one activity ──
+
+/** A Gemini answer carrying one activity's sections, as the HTTP body Gemini sends. */
+function nrSectionsAnswer(array $overrides = []): array
+{
+    return ['candidates' => [[
+        'content'      => ['parts' => [['text' => nrSections($overrides)]]],
+        'finishReason' => 'STOP',
+    ]]];
+}
+
+/** Gemini answers in this order, one per request: each entry is [body, status]. */
+function nrGeminiSequence(array $answers): void
+{
+    config(['gemini.api_key' => 'test-key']);
+
+    $sequence = Http::fakeSequence('*generativelanguage*');
+    foreach ($answers as [$body, $status]) {
+        $sequence->push($body, $status);
+    }
+}
+
+/** A five-document report its adviser has submitted: [report, club, adviser, officer, dsa, activity]. */
+function nrSubmittedReport(): array
+{
+    Storage::fake('local');
+    nrFakeGemini(nrSections());
+    [$club, $adviser, $officer] = nrClub();
+    $dsa      = nrUser('dsa');
+    $semester = nrSemester(endedDaysAgo: 1);
+    $activity = nrActivity($club, $officer);
+    $report   = nrGenerate($club, $semester);
+
+    test()->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), [
+        'sections' => nrFaithfulSections($report), 'intent' => 'submit',
+    ]);
+
+    return [$report->fresh(), $club, $adviser, $officer, $dsa, $activity];
+}
+
+function nrReturn(SemesterNarrativeReport $report, User $dsa, string $remarks = 'Attach the documentation photos and complete the minutes.')
+{
+    return test()->withSession(nrSession($dsa))->post(route('dsa.semester-reports.return', $report), ['remarks' => $remarks]);
+}
+
+it('P7: asks Gemini again after a temporary 500, and keeps the draft', function () {
+    Sleep::fake();
+    nrGeminiSequence([[['error' => ['code' => 500, 'status' => 'INTERNAL']], 500], [nrSectionsAnswer(), 200]]);
+    [$club, , $officer] = nrClub();
+    $semester = nrSemester(endedDaysAgo: 1);
+    $activity = nrActivity($club, $officer);
+
+    $report = nrGenerate($club, $semester);
+
+    expect($report->ai_available)->toBeTrue()
+        ->and($report->section($activity->id, 'introduction'))->toBe('The activity was held as recorded.')
+        ->and(Http::recorded())->toHaveCount(2);
+    Sleep::assertSleptTimes(1);
+});
+
+it('P7: retries rate limiting and an unavailable server, up to three attempts', function () {
+    Sleep::fake();
+    nrGeminiSequence([[[], 429], [[], 503], [nrSectionsAnswer(), 200]]);
+    [$club, , $officer] = nrClub();
+    $semester = nrSemester(endedDaysAgo: 1);
+    nrActivity($club, $officer);
+
+    expect(nrGenerate($club, $semester)->ai_available)->toBeTrue()
+        ->and(Http::recorded())->toHaveCount(3);
+});
+
+it('P7: gives up after three temporary errors and leaves the activity for a manual draft', function () {
+    Sleep::fake();
+    nrGeminiSequence([[[], 500], [[], 500], [[], 500], [nrSectionsAnswer(), 200]]);
+    [$club, , $officer] = nrClub();
+    $semester = nrSemester(endedDaysAgo: 1);
+    $activity = nrActivity($club, $officer);
+
+    $report = nrGenerate($club, $semester);
+
+    expect($report->ai_available)->toBeFalse()
+        ->and($report->draftSource($activity->id))->toBe('template')
+        ->and(Http::recorded())->toHaveCount(3);
+});
+
+it('P7: does not retry an error that asking again cannot fix', function () {
+    Sleep::fake();
+    nrGeminiSequence([[['error' => ['code' => 400, 'status' => 'INVALID_ARGUMENT']], 400], [nrSectionsAnswer(), 200]]);
+    [$club, , $officer] = nrClub();
+    $semester = nrSemester(endedDaysAgo: 1);
+    nrActivity($club, $officer);
+
+    expect(nrGenerate($club, $semester)->ai_available)->toBeFalse()
+        ->and(Http::recorded())->toHaveCount(1);
+    Sleep::assertNeverSlept();
+});
+
+it('P7: does not retry a lost connection, so offline use falls back at once', function () {
+    Sleep::fake();
+    config(['gemini.api_key' => 'test-key']);
+    Http::fake(['*generativelanguage*' => Http::failedConnection('cURL error 7: Failed to connect')]);
+
+    expect(app(GeminiService::class)->draftAnnouncement('General Assembly', 'announcement', 'BYTE Org'))->toBeNull();
+    Sleep::assertNeverSlept();
+});
+
+it('P7: the other AI features get the same retry', function () {
+    Sleep::fake();
+    nrGeminiSequence([[[], 502], [['candidates' => [['content' => ['parts' => [['text' => 'Members are invited to the assembly.']]], 'finishReason' => 'STOP']]], 200]]);
+
+    expect(app(GeminiService::class)->draftAnnouncement('General Assembly', 'announcement', 'BYTE Org'))
+        ->toBe('Members are invited to the assembly.');
+});
+
+it('P7: the DSA returns a submitted report to the adviser with remarks', function () {
+    [$report, , $adviser, $officer, $dsa] = nrSubmittedReport();
+
+    nrReturn($report, $dsa)->assertRedirect(route('dsa.semester-reports.index'));
+    $report->refresh();
+
+    expect($report->status)->toBe('pending_review')
+        ->and($report->isReturned())->toBeTrue()
+        ->and($report->submitted_at)->toBeNull()
+        ->and($report->returned_by)->toBe($dsa->id)
+        ->and($report->return_remarks)->toBe('Attach the documentation photos and complete the minutes.')
+        ->and(ClubNotification::where('recipient_id', $adviser->id)->where('title', 'Semester narrative report returned for revision')
+            ->where('body', 'like', '%Attach the documentation photos%')->exists())->toBeTrue()
+        ->and(ClubNotification::where('recipient_id', $officer->id)->where('title', 'Semester narrative report returned for revision')->exists())->toBeTrue()
+        ->and(AuditLog::where('action', 'semester_report.returned')->where('resource_id', $report->id)->exists())->toBeTrue();
+});
+
+it('P7: the DSA must say what to revise', function () {
+    [$report, , , , $dsa] = nrSubmittedReport();
+
+    nrReturn($report, $dsa, '')->assertSessionHasErrors('remarks');
+
+    expect($report->fresh()->status)->toBe('submitted');
+});
+
+it('P7: only a submitted report can be returned', function () {
+    nrFakeGemini(nrSections());
+    [$club, , $officer] = nrClub();
+    $dsa = nrUser('dsa');
+    nrActivity($club, $officer);
+    $report = nrGenerate($club, nrSemester(endedDaysAgo: 1));
+
+    nrReturn($report, $dsa)->assertSessionHasErrors('revision');
+
+    expect($report->fresh()->returned_at)->toBeNull();
+});
+
+it('P7: a report of a club with no adviser is not returned to nobody', function () {
+    [$report, $club, , , $dsa] = nrSubmittedReport();
+    $club->update(['adviser_id' => null]);
+
+    nrReturn($report, $dsa)->assertSessionHasErrors('revision');
+
+    expect($report->fresh()->status)->toBe('submitted');
+});
+
+it('P7: only the DSA can return a report', function (string $role) {
+    [$report] = nrSubmittedReport();
+
+    nrReturn($report, nrUser($role))->assertForbidden();
+
+    expect($report->fresh()->status)->toBe('submitted');
+})->with(['adviser', 'president', 'member']);
+
+it('P7: the DSA sees which reports are waiting on a revision', function () {
+    [$report, $club, , , $dsa] = nrSubmittedReport();
+    nrReturn($report, $dsa);
+
+    $this->withSession(nrSession($dsa))->get(route('dsa.semester-reports.index'))
+        ->assertOk()->assertSee('Returned for Revision')->assertSee($club->name)
+        ->assertSee('Attach the documentation photos and complete the minutes.');
+});
+
+it("P7: the adviser sees the DSA's remarks, revises the report and resubmits it", function () {
+    [$report, , $adviser, , $dsa, $activity] = nrSubmittedReport();
+    nrReturn($report, $dsa);
+
+    $this->withSession(nrSession($adviser))->get(route('adviser.semester-reports.index'))
+        ->assertOk()->assertSee('Returned by the DSA');
+    $this->withSession(nrSession($adviser))->get(route('adviser.semester-reports.show', $report))
+        ->assertOk()->assertSee('Returned by the DSA for revision')
+        ->assertSee('Attach the documentation photos and complete the minutes.')->assertSee('Resubmit to DSA');
+
+    $sections = nrFaithfulSections($report->fresh());
+    $sections[$activity->id]['minutes'] = 'Agenda: As planned. Proceedings: The officers presented the semester plan.';
+
+    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), [
+        'sections' => $sections, 'intent' => 'submit',
+    ])->assertSessionHas('success', 'Revised report submitted to the DSA.');
+
+    $report->refresh();
+    $minutes  = nrDocumentText((new DocumentBuilder($report))->build('minutes'));
+    $audit    = AuditLog::where('action', 'semester_report.submitted')->where('resource_id', $report->id)->orderByDesc('id')->first();
+
+    expect($report->status)->toBe('submitted')
+        ->and($report->submitted_at)->not->toBeNull()
+        ->and($report->returned_at)->not->toBeNull()
+        ->and($minutes)->toContain('The officers presented the semester plan.')
+        ->and(Storage::disk('local')->exists($report->documentDirectory() . '/minutes.docx'))->toBeTrue()
+        ->and(ClubNotification::where('recipient_id', $dsa->id)->where('title', 'Revised semester narrative report submitted')->exists())->toBeTrue()
+        ->and($audit->metadata['resubmission'] ?? null)->toBeTrue();
+
+    $this->withSession(nrSession($dsa))->get(route('dsa.semester-reports.index'))
+        ->assertOk()->assertSee('revised after you returned it')->assertDontSee('Returned for Revision');
+});
+
+it('P7: a returned report lets the officers attach report photos again until it is resubmitted', function () {
+    [$report, , $adviser, , $dsa, $activity] = nrSubmittedReport();
+
+    expect($activity->submittedReport()?->id)->toBe($report->id);
+
+    nrReturn($report, $dsa);
+    expect($activity->fresh()->submittedReport())->toBeNull();
+
+    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), [
+        'sections' => nrFaithfulSections($report->fresh()), 'intent' => 'submit',
+    ]);
+    expect($activity->fresh()->submittedReport()?->id)->toBe($report->id);
+});
+
+it('P7: the adviser has the AI draft an activity it could not draft the first time', function () {
+    Storage::fake('local');
+    Sleep::fake();
+    nrGeminiSequence([[[], 400], [nrSectionsAnswer(['introduction' => 'Drafted on the second request.']), 200]]);
+    [$club, $adviser, $officer] = nrClub();
+    $activity = nrActivity($club, $officer);
+    $report   = nrGenerate($club, nrSemester(endedDaysAgo: 1));
+
+    expect($report->ai_available)->toBeFalse();
+    $this->withSession(nrSession($adviser))->get(route('adviser.semester-reports.show', $report))
+        ->assertSee('AI Unavailable — Manual Draft Required')->assertSee('Draft with AI');
+
+    $this->withSession(nrSession($adviser))
+        ->patch(route('adviser.semester-reports.redraft', [$report, $activity->id]), ['sections' => []])
+        ->assertRedirect(route('adviser.semester-reports.show', $report) . "#activity-{$activity->id}")
+        ->assertSessionHas('success');
+
+    $report->refresh();
+
+    expect($report->section($activity->id, 'introduction'))->toBe('Drafted on the second request.')
+        ->and($report->ai_sections[$activity->id]['introduction'])->toBe('Drafted on the second request.')
+        ->and($report->ai_available)->toBeTrue()
+        ->and($report->status)->toBe('pending_review')
+        ->and(AuditLog::where('action', 'ai.semester_report.section_redrafted')->where('resource_id', $report->id)->exists())->toBeTrue();
+
+    $this->withSession(nrSession($adviser))->get(route('adviser.semester-reports.show', $report))
+        ->assertDontSee('AI Unavailable — Manual Draft Required');
+});
+
+it('P7: redrafting one activity keeps the edits made to the others', function () {
+    Storage::fake('local');
+    nrFakeGemini(nrSections(['introduction' => 'A fresh draft of the workshop.']));
+    [$club, $adviser, $officer] = nrClub();
+    $meeting  = nrActivity($club, $officer);
+    $workshop = nrActivity($club, $officer, [
+        'title' => 'Web Development Workshop', 'activity_type' => 'campus_resource_use',
+        'approval_status' => 'approved', 'date' => today()->subDays(20)->toDateString(),
+    ]);
+    $report = nrGenerate($club, nrSemester(endedDaysAgo: 1));
+
+    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.redraft', [$report, $workshop->id]), [
+        'sections' => [
+            $meeting->id  => ['introduction' => 'The adviser rewrote the meeting.'],
+            $workshop->id => ['introduction' => 'Typed but about to be replaced.'],
+        ],
+    ]);
+
+    $report->refresh();
+
+    expect($report->section($meeting->id, 'introduction'))->toBe('The adviser rewrote the meeting.')
+        ->and($report->section($workshop->id, 'introduction'))->toBe('A fresh draft of the workshop.');
+});
+
+it('P7: a redraft the AI cannot answer changes nothing in the activity', function () {
+    Storage::fake('local');
+    Sleep::fake();
+    nrGeminiSequence([[nrSectionsAnswer(), 200], [[], 400]]);
+    [$club, $adviser, $officer] = nrClub();
+    $activity = nrActivity($club, $officer);
+    $report   = nrGenerate($club, nrSemester(endedDaysAgo: 1));
+
+    $this->withSession(nrSession($adviser))
+        ->patch(route('adviser.semester-reports.redraft', [$report, $activity->id]), ['sections' => []])
+        ->assertSessionHasErrors('status');
+
+    expect($report->fresh()->section($activity->id, 'introduction'))->toBe('The activity was held as recorded.');
+});
+
+it('P7: redraft is refused for a submitted report, another club, an activity outside the report and a legacy report', function () {
+    [$report, $club, $adviser, $officer, , $activity] = nrSubmittedReport();
+    [, $otherAdviser] = nrClub('Another Club');
+
+    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.redraft', [$report, $activity->id]))
+        ->assertSessionHasErrors('status');
+    $this->withSession(nrSession($otherAdviser))->patch(route('adviser.semester-reports.redraft', [$report, $activity->id]))
+        ->assertForbidden();
+
+    $report->update(['status' => 'pending_review']);
+    $outside = nrActivity($club, $officer, ['title' => 'Not in the report', 'date' => today()->addDays(5)->toDateString()]);
+    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.redraft', [$report, $outside->id]))
+        ->assertNotFound();
+
+    [$legacyClub, $legacyAdviser] = nrClub('Legacy Club');
+    $legacy = nrLegacyReport($legacyClub, nrSemester(endedDaysAgo: 400), 'A single narrative.');
+    $this->withSession(nrSession($legacyAdviser))->patch(route('adviser.semester-reports.redraft', [$legacy, $activity->id]))
+        ->assertNotFound();
+});
+
+// ── Procedure 8 — when Gemini is down: outage memory, template drafts, catching up ──
+
+/** Gemini answers 503 until it has answered three times: one request's retries, all failed. */
+function nrGeminiDown(): void
+{
+    Sleep::fake();
+    nrGeminiSequence([[[], 503], [[], 503], [[], 503]]);
+}
+
+it('P8: the API key travels in a header, never in the URL', function () {
+    nrFakeGemini('Members are invited.');
+
+    app(GeminiService::class)->draftAnnouncement('General Assembly', 'announcement', 'BYTE Org');
+
+    Http::assertSent(fn ($request) => ! str_contains($request->url(), 'key=')
+        && $request->hasHeader('x-goog-api-key', 'test-key'));
+});
+
+it('P8: an unavailable Gemini is remembered, so the next AI request falls back at once', function () {
+    nrGeminiDown();
+    $gemini = app(GeminiService::class);
+
+    expect($gemini->draftAnnouncement('General Assembly', 'announcement', 'BYTE Org'))->toBeNull()
+        ->and($gemini->isReady())->toBeFalse()
+        ->and($gemini->draftAnnouncement('General Assembly', 'announcement', 'BYTE Org'))->toBeNull()
+        ->and(Http::recorded())->toHaveCount(3);
+
+    $this->travel(GeminiService::OUTAGE_SECONDS + 1)->seconds();
+
+    expect($gemini->isReady())->toBeTrue();
+});
+
+it('P8: a lost connection is remembered as an outage too', function () {
+    Sleep::fake();
+    config(['gemini.api_key' => 'test-key']);
+    Http::fake(['*generativelanguage*' => Http::failedConnection('cURL error 28: Operation timed out')]);
+
+    expect(app(GeminiService::class)->draftAnnouncement('General Assembly', 'announcement', 'BYTE Org'))->toBeNull()
+        ->and(app(GeminiService::class)->isReady())->toBeFalse();
+});
+
+it('P8: one request Gemini cannot handle does not switch the AI off for everyone', function (int $status) {
+    Sleep::fake();
+    nrGeminiSequence([[[], $status], [[], $status], [[], $status]]);
+
+    expect(app(GeminiService::class)->draftAnnouncement('General Assembly', 'announcement', 'BYTE Org'))->toBeNull()
+        ->and(app(GeminiService::class)->isReady())->toBeTrue();
+})->with([500, 400]);
+
+it('P8: an activity the AI cannot draft starts from a template of its records', function () {
+    config(['gemini.api_key' => '']);
+    Http::fake();
+    [$club, , $officer] = nrClub();
+    $activity = nrActivity($club, $officer);
+    nrCheckIn($activity, 11);
+
+    $report = nrGenerate($club, nrSemester(endedDaysAgo: 1));
+    $id     = $activity->id;
+
+    expect($report->draftSource($id))->toBe('template')
+        ->and($report->ai_sections[$id]['source'])->toBe('template')
+        ->and($report->ai_available)->toBeFalse()
+        ->and($report->section($id, 'introduction'))
+            ->toStartWith('"BYTE Org 1st Semester General Assembly" (Internal Meeting) was held on ')
+            ->toContain('at AVR.')
+            ->toContain("The officers' proposal described it as follows: The opening general assembly where officers present the semester plan.")
+            ->toContain('Of the 13 expected participants, 11 attended, a turnout of 84.6%')
+        ->and($report->section($id, 'rationale'))
+            ->toBe('According to its proposal, the activity was organised for the following purpose: To orient members on the semester plan and ratify the committee heads.')
+        ->and($report->section($id, 'minutes'))
+            ->toContain('Attendance: 11 of 13 expected participants')
+            ->toContain('Proceedings: Not recorded in ClubSync. See the attached minutes.')
+        ->and($report->section($id, 'recommendations'))
+            ->toStartWith('- ')
+            ->toContain('Attach documentation photos of the activity to the report.');
+    Http::assertNothingSent();
+});
+
+it('P8: a template draft says only what the records say, so the review checks pass', function () {
+    config(['gemini.api_key' => '']);
+    Http::fake();
+    [$club, , $officer] = nrClub();
+    $meeting = nrActivity($club, $officer, ['post_report_content' => 'Members elected four committee heads.']);
+    nrCheckIn($meeting, 5);
+    $workshop = nrActivity($club, $officer, [
+        'title' => 'Web Development Workshop', 'activity_type' => 'campus_resource_use', 'budget_amount' => 1500,
+        'approval_status' => 'approved', 'date' => today()->subDays(20)->toDateString(),
+    ]);
+
+    $report = nrGenerate($club, nrSemester(endedDaysAgo: 1));
+
+    expect($report->reviewWarnings())->toBe([])
+        ->and($report->section($meeting->id, 'minutes'))->toContain('Proceedings: Members elected four committee heads.')
+        ->and($report->section($meeting->id, 'introduction'))->toContain("The officers' post-activity report states: Members elected four committee heads.")
+        ->and($report->section($workshop->id, 'introduction'))->toContain('Attendance was not recorded in ClubSync for this activity.')
+        ->and($report->section($workshop->id, 'minutes'))->toBe('')
+        ->and($report->section($workshop->id, 'recommendations'))
+            ->toContain('Attach the receipts for the PHP 1,500.00 budget released for this activity.');
+});
+
+it('P8: the adviser is told the activities start from a template, and the page flags them', function () {
+    config(['gemini.api_key' => '']);
+    Http::fake();
+    [$club, $adviser, $officer] = nrClub();
+    nrActivity($club, $officer);
+
+    $report = nrGenerate($club, nrSemester(endedDaysAgo: 1));
+
+    expect(ClubNotification::where('recipient_id', $adviser->id)->where('title', 'Semester narrative report ready for review')
+        ->where('body', 'like', '%AI Unavailable — Manual Draft Required%')
+        ->where('body', 'like', '%starting template%')->exists())->toBeTrue()
+        ->and($report->sectionsEdited())->toBeFalse();
+
+    $this->withSession(nrSession($adviser))->get(route('adviser.semester-reports.show', $report))
+        ->assertOk()->assertSee('Template draft')->assertSee('They start')->assertSee('Fill from records');
+});
+
+it('P8: a Gemini outage partway through a report stops asking and templates the rest at once', function () {
+    nrGeminiDown();
+    [$club, , $officer] = nrClub();
+    $first  = nrActivity($club, $officer);
+    $second = nrActivity($club, $officer, ['title' => 'Planning Meeting', 'date' => today()->subDays(20)->toDateString()]);
+
+    $report = nrGenerate($club, nrSemester(endedDaysAgo: 1));
+
+    expect(Http::recorded())->toHaveCount(3)
+        ->and($report->draftSource($first->id))->toBe('template')
+        ->and($report->draftSource($second->id))->toBe('template');
+});
+
+it('P8: once Gemini is back, ai:catch-up has the AI draft the template activities left unchanged', function () {
+    Sleep::fake();
+    nrGeminiSequence([[[], 503], [[], 503], [[], 503], [nrSectionsAnswer(['introduction' => 'Drafted once the AI was back.']), 200]]);
+    [$club, $adviser, $officer] = nrClub();
+    $activity = nrActivity($club, $officer);
+    $report   = nrGenerate($club, nrSemester(endedDaysAgo: 1));
+
+    // Still inside the remembered outage: nothing is sent.
+    $this->artisan('ai:catch-up')->assertSuccessful();
+    expect(Http::recorded())->toHaveCount(3);
+
+    $this->travel(GeminiService::OUTAGE_SECONDS + 1)->seconds();
+    $this->artisan('ai:catch-up')->assertSuccessful();
+    $report->refresh();
+
+    $audit = AuditLog::where('action', 'ai.semester_report.section_redrafted')->where('resource_id', $report->id)->first();
+
+    expect(Http::recorded())->toHaveCount(4)
+        ->and($report->draftSource($activity->id))->toBe('ai')
+        ->and($report->section($activity->id, 'introduction'))->toBe('Drafted once the AI was back.')
+        ->and($report->ai_available)->toBeTrue()
+        ->and($report->status)->toBe('pending_review')
+        ->and($audit?->metadata['automatic'] ?? null)->toBeTrue()
+        ->and(ClubNotification::where('recipient_id', $adviser->id)->where('title', 'AI drafts added to your semester report')
+            ->where('body', 'like', '%BYTE Org 1st Semester General Assembly%')->exists())->toBeTrue();
+});
+
+it('P8: ai:catch-up leaves alone a template activity the adviser has edited', function () {
+    config(['gemini.api_key' => '']);
+    // No Http::fake() yet: its catch-all would answer before nrFakeGemini() below.
+    [$club, $adviser, $officer] = nrClub();
+    $edited    = nrActivity($club, $officer);
+    $untouched = nrActivity($club, $officer, ['title' => 'Planning Meeting', 'date' => today()->subDays(20)->toDateString()]);
+    $report    = nrGenerate($club, nrSemester(endedDaysAgo: 1));
+
+    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), [
+        'sections' => [$edited->id => ['introduction' => 'The adviser wrote this one.']], 'intent' => 'save',
+    ]);
+
+    nrFakeGemini(nrSections(['introduction' => 'An AI draft.']));
+    $this->artisan('ai:catch-up')->assertSuccessful();
+    $report->refresh();
+
+    expect($report->section($edited->id, 'introduction'))->toBe('The adviser wrote this one.')
+        ->and($report->draftSource($edited->id))->toBe('template')
+        ->and($report->section($untouched->id, 'introduction'))->toBe('An AI draft.')
+        ->and(Http::recorded())->toHaveCount(1);
+});
+
+it('P8: ai:catch-up never changes a submitted report', function () {
+    Storage::fake('local');
+    config(['gemini.api_key' => '']);
+    // No Http::fake() yet: its catch-all would answer before nrFakeGemini() below.
+    [$club, $adviser, $officer] = nrClub();
+    $activity = nrActivity($club, $officer);
+    $report   = nrGenerate($club, nrSemester(endedDaysAgo: 1));
+
+    // The template's introduction states the attendance, so it can be submitted as it is.
+    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.update', $report), [
+        'sections' => $report->sections, 'intent' => 'submit',
+    ]);
+    $before = $report->fresh()->sections;
+
+    nrFakeGemini(nrSections());
+    $this->artisan('ai:catch-up')->assertSuccessful();
+
+    expect($report->fresh()->status)->toBe('submitted')
+        ->and($report->fresh()->sections)->toBe($before);
+    Http::assertNothingSent();
+});
+
+it('P8: the adviser fills an activity in from its records, with no AI at all', function () {
+    config(['gemini.api_key' => '']);
+    Http::fake();
+    [$club, $adviser, $officer] = nrClub();
+    $activity = nrActivity($club, $officer);
+    $report   = nrSectionReport($club, nrSemester(endedDaysAgo: 1));
+
+    $this->withSession(nrSession($adviser))->get(route('adviser.semester-reports.show', $report))
+        ->assertSee('Manual draft required')->assertSee('Fill from records')->assertDontSee('Draft with AI');
+
+    $this->withSession(nrSession($adviser))
+        ->patch(route('adviser.semester-reports.template', [$report, $activity->id]), ['sections' => []])
+        ->assertRedirect(route('adviser.semester-reports.show', $report) . "#activity-{$activity->id}")
+        ->assertSessionHas('success');
+
+    $report->refresh();
+
+    expect($report->draftSource($activity->id))->toBe('template')
+        ->and($report->section($activity->id, 'introduction'))->toStartWith('"BYTE Org 1st Semester General Assembly"')
+        ->and(AuditLog::where('action', 'semester_report.section_templated')->where('resource_id', $report->id)->exists())->toBeTrue();
+    Http::assertNothingSent();
+});
+
+it('P8: filling from records keeps an AI draft as the first draft, so it is not redrafted behind the adviser', function () {
+    nrFakeGemini(nrSections(['introduction' => 'The AI draft.']));
+    [$club, $adviser, $officer] = nrClub();
+    $activity = nrActivity($club, $officer);
+    $report   = nrGenerate($club, nrSemester(endedDaysAgo: 1));
+
+    $this->withSession(nrSession($adviser))
+        ->patch(route('adviser.semester-reports.template', [$report, $activity->id]), ['sections' => []]);
+    $report->refresh();
+
+    expect($report->draftSource($activity->id))->toBe('ai')
+        ->and($report->ai_sections[$activity->id]['introduction'])->toBe('The AI draft.')
+        ->and($report->section($activity->id, 'introduction'))->toStartWith('"BYTE Org 1st Semester General Assembly"')
+        ->and($report->sectionsEdited())->toBeTrue();
+});
+
+it('P8: only the club adviser fills a report in from its records, and only while it is a draft', function () {
+    Storage::fake('local');
+    config(['gemini.api_key' => '']);
+    Http::fake();
+    [$club, $adviser, $officer] = nrClub();
+    [, $otherAdviser] = nrClub('Another Club');
+    $activity = nrActivity($club, $officer);
+    $report   = nrGenerate($club, nrSemester(endedDaysAgo: 1));
+
+    $this->withSession(nrSession($otherAdviser))->patch(route('adviser.semester-reports.template', [$report, $activity->id]))
+        ->assertForbidden();
+
+    $report->update(['status' => 'submitted']);
+    $this->withSession(nrSession($adviser))->patch(route('adviser.semester-reports.template', [$report, $activity->id]))
+        ->assertSessionHasErrors('status');
+});
+
+it('P8: during an outage the review page offers no AI button', function () {
+    nrGeminiDown();
+    [$club, $adviser, $officer] = nrClub();
+    nrActivity($club, $officer);
+    $report = nrGenerate($club, nrSemester(endedDaysAgo: 1));
+
+    $this->withSession(nrSession($adviser))->get(route('adviser.semester-reports.show', $report))
+        ->assertOk()->assertDontSee('Draft with AI')->assertSee('the AI is unavailable right now');
+});
+
+it('P8: ai:catch-up is scheduled every 15 minutes', function () {
+    $event = collect(app(Schedule::class)->events())
+        ->first(fn ($event) => str_contains((string) $event->command, 'ai:catch-up'));
+
+    expect($event)->not->toBeNull()
+        ->and($event->expression)->toBe('*/15 * * * *');
+});

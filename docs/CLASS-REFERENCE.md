@@ -126,7 +126,7 @@ Table `club_activities` (renamed from `events`).
 | date | `date` → cast `date` |
 | time_start | `time` |
 | time_end | `time` |
-| venue | `string` |
+| venue | `string` — one of `const VENUES` (main-campus rooms); exclusive per overlapping time slot via `findVenueConflict()` |
 | purpose | `text` |
 | expected_participants | `unsignedInteger` → cast `integer` |
 | status | `enum('scheduled','completed','cancelled')` default `scheduled` |
@@ -735,6 +735,15 @@ No attributes, no methods.
 | `+` | `approve(Request $request, AiNotificationQueue $violation)` | `RedirectResponse` |
 | `+` | `dismiss(AiNotificationQueue $violation)` | `RedirectResponse` |
 
+#### `ClubPerformanceController extends Controller`
+How well each club has done over a semester. Replaced the Churn Risk Engine for the DSA.
+| Vis | Member | Type / Returns |
+|---|---|---|
+| `-` | `$performance` | `ClubPerformanceService` |
+| `+` | `index(Request $request)` | `View` |
+| `+` | `show(Request $request, Club $club)` | `View` |
+| `-` | `semesters(Request $request)` | `array` |
+
 #### `ChedReportController extends Controller`
 | Vis | Method | Returns |
 |---|---|---|
@@ -782,7 +791,7 @@ No attributes, no methods.
 #### `ActivityController extends Controller`
 | Vis | Member | Type / Returns |
 |---|---|---|
-| `+` | `const VENUES` | `array` — SCC Gymnasium, Main AV Room, Open Court, Function Hall, Covered Court, Others |
+| — | venue list | read from `ClubActivity::VENUES` — the main-campus rooms (AVR, EB/PC/SN/ST rooms, JD 1–2, Moot Court, PC Labs A–C, Library, YDC) |
 | `+` | `const YEAR_LEVELS` | `array<int,string>` — 1→"1st Year" … 4→"4th Year" |
 | `-` | `$firebase` | `FirebaseService` |
 | `+` | `__construct(FirebaseService $firebase)` | |
@@ -1038,7 +1047,20 @@ Decides who gets which event and reconciles each user's copies.
 | `-` | `payload(string $type, int $id, array $fields, string $slot = 'main')` | `array` |
 | `-` | `timezone()` | `string` |
 
-### 3.6 `ChurnRiskService`
+### 3.5b `ClubPerformanceService`
+Club-level semester score for the DSA (activities 30, turnout 25, presence 15, fees 15, reports 15; −5 per unresolved compliance notice).
+| Vis | Member | Type / Returns |
+|---|---|---|
+| `+` | `const WEIGHTS` | `array` |
+| `+` | `const STANDINGS` | `array` |
+| `+` | `forClubs(Collection $clubs, Semester $semester)` | `Collection` |
+| `+` | `forClub(Club $club, Semester $semester)` | `array` |
+| `+` | `summarize(Collection $rows)` | `array` |
+| `+` | `months(Semester $semester)` | `array` |
+| `-` | `window(Semester $semester)` | `array` |
+| `-` | `profile(Club $club, Semester $semester, array $window, array $d)` | `array` |
+
+### 3.6 `ChurnRiskService` (officers only)
 | Vis | Member | Type / Returns |
 |---|---|---|
 | `+` | `const HIGH` | `int` = `67` |

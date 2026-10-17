@@ -22,6 +22,10 @@ Schedule::job(new NotifyOfficerTurnoverDue)->dailyAt('07:00');
 // Draft each club's end-of-semester narrative report the day after the semester ends.
 Schedule::job(new DispatchSemesterNarrativeReportsJob)->dailyAt('06:00');
 
+// Finish what waited out a Gemini outage: proofs of enrollment saved as Pending
+// Verification, and report activities that started from a template (POLICY.md § AI & Automation).
+Schedule::command('ai:catch-up')->everyFifteenMinutes()->withoutOverlapping();
+
 // Prune transient data and alert admins when the database nears its cap.
 Schedule::command('retention:check')->dailyAt('02:00');
 

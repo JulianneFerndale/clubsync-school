@@ -12,20 +12,19 @@
     </a>
     <div class="flex items-start justify-between gap-3">
         <h1 class="text-white font-bold text-xl leading-snug flex-1">{{ $report->semester->label }} Narrative Report</h1>
-        <x-status-badge :status="$report->status" />
+        <x-status-badge :status="$report->badgeStatus()" />
     </div>
     <p class="text-white/60 text-xs mt-2">{{ $report->club->name }} · {{ $data['start'] }} – {{ $data['end'] }}</p>
 </div>
 
 <div class="px-4 py-5 space-y-4">
 
-    @if(session('success'))
-        <div class="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-green-700 text-sm">{{ session('success') }}</div>
-    @endif
 
     @error('status')
         <div class="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-600 text-sm">{{ $message }}</div>
     @enderror
+
+    @include('adviser.semester-reports.partials.returned')
 
     @if($report->ai_available)
         <div class="flex items-center gap-2 px-3 py-2 bg-purple-50 rounded-xl border border-purple-100">
@@ -114,7 +113,7 @@
                 <button type="submit" name="intent" value="submit"
                         class="flex items-center justify-center bg-[#07873e] text-[#F9A825] font-semibold text-sm rounded-xl px-5 py-3.5 hover:opacity-90 transition-opacity"
                         onclick="return confirm('Submit this narrative report to the DSA? It can no longer be edited afterwards.')">
-                    Approve &amp; Submit to DSA
+                    {{ $report->isReturned() ? 'Resubmit to DSA' : 'Approve & Submit to DSA' }}
                 </button>
             </div>
         </form>

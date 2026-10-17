@@ -3,9 +3,9 @@
 namespace App\Http\Controllers\Officer;
 
 use App\Http\Controllers\Controller;
-use App\Jobs\GenerateChedReportJob;
 use App\Jobs\GenerateClubNarrativeJob;
 use App\Jobs\NotifyAdviserOfActivitySubmission;
+use App\Jobs\NotifyMemberOfAttendance;
 use App\Jobs\NotifyMembersOfActivity;
 use App\Jobs\SyncToGoogleCalendars;
 use App\Models\ActivityChangeLog;
@@ -230,7 +230,7 @@ class ActivityController extends Controller
         $club  = $this->officerClub();
         $venues = ClubActivity::VENUES;
         $yearLevels = self::YEAR_LEVELS;
-        $aiAvailable = $this->gemini->isAvailable();
+        $aiAvailable = $this->gemini->isReady();
 
         return view('officer.activities.create', compact('club', 'venues', 'yearLevels', 'aiAvailable'));
     }
@@ -251,7 +251,8 @@ class ActivityController extends Controller
             'date'                  => ['required', 'date', 'after_or_equal:today'],
             'time_start'            => ['required', 'date_format:H:i'],
             'time_end'              => ['required', 'date_format:H:i', 'after:time_start'],
-            'venue'                 => ['required', 'string', 'max:255'],
+            // Main-campus rooms only (POLICY.md § Event Creation: no free text).
+            'venue'                 => ['required', 'string', Rule::in(ClubActivity::VENUES)],
             'purpose'               => ['required', 'string'],
             'expected_participants' => ['required', 'integer', 'min:1'],
             'activity_type'         => ['required', 'in:internal_meeting,acle,community_involvement,campus_resource_use,other_external'],
@@ -267,6 +268,7 @@ class ActivityController extends Controller
             'time_end.required'               => 'End time is required.',
             'time_end.after'                  => 'End time must be after start time.',
             'venue.required'                  => 'Location is required.',
+            'venue.in'                        => 'Choose a room from the main campus list.',
             'purpose.required'                => 'Purpose / Objectives is required.',
             'expected_participants.required'  => 'Expected Participants is required.',
             'activity_type.required'          => 'Activity Type is required.',
@@ -385,6 +387,8 @@ class ActivityController extends Controller
             'time_end'   => ['required', 'date_format:H:i', 'after:time_start'],
             'venue'      => ['required', 'string', Rule::in(ClubActivity::VENUES)],
             'context'    => ['nullable', 'string', 'max:500'],
+        ], [
+            'venue.in' => 'Choose a room from the main campus list.',
         ]);
 
         // Told here too, so the officer finds out at "Check venue & draft proposal"
@@ -420,7 +424,7 @@ class ActivityController extends Controller
         }
 
         // ── 2. Draft (best-effort) ───────────────────────────────────────────
-        $aiAvailable = $this->gemini->isAvailable();
+        $aiAvailable = $this->gemini->isReady();
         $roster = $aiAvailable ? $this->rosterFacts($club) : null;
         $draft  = null;
 
@@ -467,11 +471,15 @@ class ActivityController extends Controller
             abort(403);
         }
 
-        $event->load('club', 'creator', 'changeLogs.changedBy', 'chedReport');
+        $event->load('club', 'creator', 'changeLogs.changedBy', 'photos.uploader');
 
         $attendanceCount = $event->attendance()->whereNotNull('time_in')->count();
 
-        return view('officer.activities.show', compact('event', 'club', 'attendanceCount'));
+        // Photos and records for the semester report; fixed once that report reached the DSA.
+        $photosByCategory = $event->photos->groupBy('category');
+        $reportLocked     = $event->submittedReport() !== null;
+
+        return view('officer.activities.show', compact('event', 'club', 'attendanceCount', 'photosByCategory', 'reportLocked'));
     }
 
     public function edit(ClubActivity $event): View
@@ -504,7 +512,9 @@ class ActivityController extends Controller
             'date'                  => ['required', 'date'],
             'time_start'            => ['required', 'date_format:H:i'],
             'time_end'              => ['required', 'date_format:H:i', 'after:time_start'],
-            'venue'                 => ['required', 'string', 'max:255'],
+            // A main-campus room, or the venue the activity already has: an activity
+            // booked before the room list changed stays editable without being moved.
+            'venue'                 => ['required', 'string', Rule::in([...ClubActivity::VENUES, $event->venue])],
             'purpose'               => ['required', 'string'],
             'expected_participants' => ['required', 'integer', 'min:1'],
             'activity_type'         => ['required', 'in:internal_meeting,acle,community_involvement,campus_resource_use,other_external'],
@@ -519,6 +529,7 @@ class ActivityController extends Controller
             'time_end.required'               => 'End time is required.',
             'time_end.after'                  => 'End time must be after start time.',
             'venue.required'                  => 'Location is required.',
+            'venue.in'                        => 'Choose a room from the main campus list.',
             'purpose.required'                => 'Purpose / Objectives is required.',
             'expected_participants.required'  => 'Expected Participants is required.',
             'activity_type.required'          => 'Activity Type is required.',
@@ -630,23 +641,20 @@ class ActivityController extends Controller
             return back()->withErrors(['status' => 'This activity has already been completed.']);
         }
 
-        $needsChedReport = in_array($event->activity_type, ['acle', 'community_involvement'], true);
-
         $event->update([
-            'status'             => 'completed',
-            'completed_at'       => now(),
-            'post_report_status' => $needsChedReport ? 'pending' : null,
+            'status'       => 'completed',
+            'completed_at' => now(),
         ]);
 
-        if ($needsChedReport) {
-            GenerateChedReportJob::dispatch($event->id);
-        }
+        // The attendance is concluded: everyone checked in is told what their record says.
+        // Queued first, so the members are not kept waiting behind the AI recap below.
+        NotifyMemberOfAttendance::dispatch($event->id, NotifyMemberOfAttendance::CLOSED, null, auth_user_id());
 
         // Milestone reached — draft a post-event narrative for the bulletin.
         // The draft is held for adviser review; nothing is published automatically.
         GenerateClubNarrativeJob::dispatch($event->id);
 
         return redirect()->route('officer.activities.show', $event)
-            ->with('success', 'Activity marked as completed.' . ($needsChedReport ? ' A CHED report is being generated.' : ''));
+            ->with('success', 'Activity marked as completed.');
     }
 }

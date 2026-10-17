@@ -18,13 +18,8 @@
     <div class="flex-1 px-8 pb-12">
         <h1 class="text-2xl font-bold text-green-900 mb-8">Login to your account</h1>
 
-        @if ($errors->any())
-            <div class="mb-5 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
-                {{ $errors->first() }}
-            </div>
-        @endif
 
-        <form method="POST" action="{{ route('login') }}" data-turbo="false" class="space-y-5"
+        <form id="login-form" method="POST" action="{{ route('login') }}" data-turbo="false" class="space-y-5"
               data-loading="splash" data-loading-message="Signing you in…">
             @csrf
 
@@ -34,6 +29,7 @@
                 <input
                     type="email"
                     name="email"
+                    id="email"
                     value="{{ old('email') }}"
                     placeholder="Enter your Institutional Email"
                     autocomplete="email"
@@ -51,7 +47,7 @@
                         id="password"
                         placeholder="Enter Password"
                         autocomplete="current-password"
-                        class="w-full border border-gray-300 rounded-xl px-4 py-3.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition pr-12"
+                        class="w-full border border-gray-300 rounded-xl px-4 py-3.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition pr-12 @error('password') border-red-400 @enderror"
                     >
                     <button type="button" onclick="togglePassword('password', this)"
                             class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
@@ -73,7 +69,8 @@
                     <input type="checkbox" name="remember" class="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500">
                     <span class="text-sm text-gray-600">Remember Me</span>
                 </label>
-                <a href="{{ route('forgot-password') }}" class="text-sm text-green-700 font-medium hover:text-green-900 transition-colors">
+                <a href="{{ route('forgot-password') }}" data-forgot-link
+                   class="text-sm text-green-700 font-medium hover:text-green-900 transition-colors">
                     Forgot Password?
                 </a>
             </div>
@@ -86,6 +83,8 @@
                 </button>
             </div>
         </form>
+
+        <x-google-sign-in />
 
         <p class="text-center text-sm text-gray-500 mt-6">
             Don't have an account?
@@ -104,5 +103,67 @@ function togglePassword(id, btn) {
         svg.classList.toggle('hidden', showWhen === 'hidden' ? !isHidden : isHidden);
     });
 }
+
+// "Remember Me" applies to Google sign-in too. The Google button is a link outside the
+// form, so the box's state is carried on its address at the moment it is tapped.
+document.querySelector('[data-google-sign-in]')?.addEventListener('click', function () {
+    const url = new URL(this.href);
+    url.searchParams.delete('remember');
+    if (document.querySelector('#login-form [name="remember"]')?.checked) url.searchParams.set('remember', '1');
+    this.href = url.toString();
+});
+
+// Carry whatever email was already typed over to the Forgot Password page so it can be
+// prefilled there. Done on click (like the Google link above) rather than as the user
+// types, so the address only changes at the moment it is followed. Empty or malformed
+// input is simply left off — the page then opens with a blank field, as before.
+document.querySelector('[data-forgot-link]')?.addEventListener('click', function () {
+    const email = document.getElementById('email')?.value.trim();
+    const url = new URL(this.href);
+    url.searchParams.delete('email');
+    if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) url.searchParams.set('email', email);
+    this.href = url.toString();
+});
+
+// A device with no connection never reaches the server, so the server cannot say
+// what went wrong — the browser would show its own "no internet" page instead. Check
+// first. A HEAD request bypasses the service worker (it only handles GET), so a
+// cached page cannot pass for a live connection.
+(function () {
+    const form = document.getElementById('login-form');
+    if (!form) return;
+
+    form.addEventListener('submit', async function (e) {
+        if (form.dataset.reachable) { delete form.dataset.reachable; return; }
+
+        // The "Signing you in…" splash is already up (its listener runs first, in the
+        // capture phase) and stays up through the check; the sign-in itself waits.
+        e.preventDefault();
+
+        if (navigator.onLine && await reach('/up')) {
+            form.dataset.reachable = '1';
+            form.requestSubmit();
+            return;
+        }
+
+        window.ClubSyncLoading?.hide();
+        window.csFlash('error', 'No internet connection',
+            "ClubSync can't sign you in while you're offline. Check your Wi-Fi or mobile data, then try again.");
+    });
+
+    async function reach(url) {
+        const abort = new AbortController();
+        const timer = setTimeout(() => abort.abort(), 6000);
+        try {
+            // Any answer, even an error status, means the server can be reached.
+            await fetch(url + '?t=' + Date.now(), { method: 'HEAD', cache: 'no-store', signal: abort.signal });
+            return true;
+        } catch (_) {
+            return false;
+        } finally {
+            clearTimeout(timer);
+        }
+    }
+})();
 </script>
 @endsection

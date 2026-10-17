@@ -5,15 +5,24 @@
     <title>Receipt {{ $payment->receipt_number }}</title>
     <style>
         @page { margin: 28mm 20mm; }
-        /* Helvetica is a PDF core font, so nothing is embedded: the receipt comes out
-           around 10 KB instead of 1.2 MB, which matters when a treasurer issues one
-           per member. Latin-1 covers the names this serves, ñ included. */
+        /* Helvetica is a PDF core font, so nothing is embedded: the text costs a few KB
+           instead of 1.2 MB, which matters when a treasurer issues one per member.
+           Latin-1 covers the names this serves, ñ included. */
         body { font-family: Helvetica, Arial, sans-serif; font-size: 11px; color: #1f2937; }
 
-        .head { text-align: center; border-bottom: 2px solid #07873e; padding-bottom: 10px; }
+        .head { border-bottom: 2px solid #07873e; padding-bottom: 10px; }
+        .head table { width: 100%; border-collapse: collapse; }
+        .head td { vertical-align: middle; }
+        .head td.mark { width: 22mm; text-align: center; }
+        .head td.mark img { width: 18mm; height: 18mm; }
+        .head td.text { text-align: center; }
         .head .school { font-size: 14px; font-weight: bold; color: #07873e; letter-spacing: .5px; }
         .head .place  { font-size: 10px; color: #6b7280; margin-top: 2px; }
         .head .club   { font-size: 11px; margin-top: 6px; font-weight: bold; }
+        /* Stands in for a club with no logo, the way the app's club cards do. Centred with
+           padding: dompdf sets a tall line-height's text low in its box. */
+        .head .initials { width: 18mm; height: 11.4mm; padding-top: 6.6mm; margin: 0 auto; border-radius: 9mm;
+                          background: #07873e; color: #ffffff; font-size: 16px; line-height: 1; font-weight: bold; text-align: center; }
 
         .title { text-align: center; font-size: 13px; font-weight: bold; letter-spacing: 3px; margin: 18px 0 4px; }
         .no    { text-align: center; font-size: 12px; font-weight: bold; color: #07873e; }
@@ -37,10 +46,34 @@
 </head>
 <body>
 
+@php
+    // Inline and scaled down: dompdf does not load images by URL (see PdfImage).
+    $crest    = \App\Support\PdfImage::dataUri('/images/scc-crest.png');
+    $clubLogo = \App\Support\PdfImage::dataUri($club->profile_photo_url);
+@endphp
+
 <div class="head">
-    <div class="school">SAINT COLUMBAN COLLEGE</div>
-    <div class="place">Pagadian City</div>
-    <div class="club">{{ $club->name }}{{ $club->acronym ? ' (' . $club->acronym . ')' : '' }}</div>
+    <table>
+        <tr>
+            <td class="mark">
+                @if($crest)
+                    <img src="{{ $crest }}" alt="Saint Columban College">
+                @endif
+            </td>
+            <td class="text">
+                <div class="school">SAINT COLUMBAN COLLEGE</div>
+                <div class="place">Pagadian City</div>
+                <div class="club">{{ $club->name }}{{ $club->acronym ? ' (' . $club->acronym . ')' : '' }}</div>
+            </td>
+            <td class="mark">
+                @if($clubLogo)
+                    <img src="{{ $clubLogo }}" alt="{{ $club->name }}">
+                @else
+                    <div class="initials">{{ strtoupper(substr($club->acronym ?: $club->name, 0, 2)) }}</div>
+                @endif
+            </td>
+        </tr>
+    </table>
 </div>
 
 <div class="title">OFFICIAL RECEIPT</div>

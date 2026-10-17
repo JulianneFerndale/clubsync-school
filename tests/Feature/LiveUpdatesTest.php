@@ -195,9 +195,12 @@ test('live counts return the unread notification and chat totals for the signed-
     $conversation = Conversation::between($a, $b);
     $this->withSession(luSession($b))->postJson(route('chat.messages.store', $conversation), ['body' => 'hello'])->assertCreated();
 
+    // `latest` feeds the polling fallback's toast; it must be the reader's own.
     $this->withSession(luSession($a))->getJson(route('live.counts'))
         ->assertOk()
-        ->assertExactJson(['notifications' => 2, 'chat' => 1]);
+        ->assertJsonPath('notifications', 2)
+        ->assertJsonPath('chat', 1)
+        ->assertJsonPath('latest.id', ClubNotification::where('recipient_id', $a->id)->max('id'));
 });
 
 test('authorising a private channel does not query the database', function () {

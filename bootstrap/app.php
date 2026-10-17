@@ -39,6 +39,9 @@ return Application::configure(basePath: dirname(__DIR__))
             // belongs to no academic club, and there is no page they should reach
             // before answering that. Guests and staff pass straight through.
             \App\Http\Middleware\RequireCourseSelection::class,
+            // Same idea: a student whose proof of enrollment is with the DSA or was
+            // turned down waits on the verification page.
+            \App\Http\Middleware\RequireEnrollmentVerification::class,
         ]);
         $middleware->alias([
             'firebase.token' => \App\Http\Middleware\FirebaseTokenMiddleware::class,

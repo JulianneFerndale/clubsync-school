@@ -10,11 +10,6 @@
 
 <div class="px-4 py-5 space-y-5">
 
-    @if(session('success'))
-        <div class="bg-green-50 border border-green-200 rounded-xl px-4 py-3 text-green-700 text-sm">
-            {{ session('success') }}
-        </div>
-    @endif
 
     @if($violations->isEmpty())
         <p class="text-sm text-gray-400 text-center py-8">No violations detected.</p>

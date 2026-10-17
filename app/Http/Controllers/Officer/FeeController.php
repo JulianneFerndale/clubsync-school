@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Officer;
 
 use App\Http\Controllers\Controller;
 use Barryvdh\DomPDF\Facade\Pdf;
+use App\Jobs\NotifyMembersOfFee;
 use App\Jobs\SyncGoogleCalendarUsers;
 use App\Jobs\SyncToGoogleCalendars;
 use App\Models\ClubMember;
@@ -19,6 +20,8 @@ use Illuminate\View\View;
 
 class FeeController extends Controller
 {
+    private const CLOSED = 'This fee was cancelled, so it can no longer be changed or paid.';
+
     private function officerClub(): ?\App\Models\Club
     {
         return ClubOfficer::where('user_id', auth_user_id())
@@ -101,6 +104,8 @@ class FeeController extends Controller
         // The due date goes onto the Google Calendar of every member who owes it.
         SyncToGoogleCalendars::dispatch(GoogleCalendarEvent::FEE, $fee->id);
 
+        NotifyMembersOfFee::dispatch($fee->id, NotifyMembersOfFee::CREATED, auth_user_id());
+
         return redirect()->route('officer.fees.show', $fee)
             ->with('success', 'Fee created and assigned to ' . $memberIds->count() . ' active members.');
     }
@@ -124,12 +129,16 @@ class FeeController extends Controller
         return view('officer.fees.show', compact('club', 'fee', 'payments', 'paidCount', 'pendingCount'));
     }
 
-    public function edit(Fee $fee): View
+    public function edit(Fee $fee): View|RedirectResponse
     {
         $club = $this->officerClub();
 
         if (! $club || $fee->club_id !== $club->id) {
             abort(403);
+        }
+
+        if ($fee->isCancelled()) {
+            return redirect()->route('officer.fees.show', $fee)->with('error', self::CLOSED);
         }
 
         return view('officer.fees.edit', compact('club', 'fee'));
@@ -156,11 +165,100 @@ class FeeController extends Controller
             'academic_period.required' => 'Academic period is required.',
         ]);
 
-        $fee->update($validated);
+        if ($fee->isCancelled()) {
+            return redirect()->route('officer.fees.show', $fee)->with('error', self::CLOSED);
+        }
+
+        $fee->fill($validated);
+
+        // Members hear about what changes how much they owe or by when; a reworded
+        // title or academic period is not worth a notification.
+        $material = $fee->isDirty('amount') || $fee->isDirty('due_date');
+
+        $fee->save();
 
         SyncToGoogleCalendars::dispatch(GoogleCalendarEvent::FEE, $fee->id);
 
+        if ($material) {
+            NotifyMembersOfFee::dispatch($fee->id, NotifyMembersOfFee::UPDATED, auth_user_id());
+        }
+
         return redirect()->route('officer.fees.show', $fee)->with('success', 'Fee updated.');
+    }
+
+    /**
+     * Move the due date later. The members who still owe the fee are told the new date
+     * (and why, when a reason is given), and their calendar copies move with it.
+     */
+    public function postpone(Request $request, Fee $fee): RedirectResponse
+    {
+        $club = $this->officerClub();
+
+        if (! $club || $fee->club_id !== $club->id) {
+            abort(403);
+        }
+
+        if ($fee->isCancelled()) {
+            return back()->with('error', self::CLOSED);
+        }
+
+        $validated = $request->validate([
+            'due_date' => ['required', 'date', 'after:' . $fee->due_date->toDateString(), 'after_or_equal:today'],
+            'reason'   => ['nullable', 'string', 'max:500'],
+        ], [
+            'due_date.required'       => 'Choose the new due date.',
+            'due_date.after'          => 'A postponed fee must be due later than ' . $fee->due_date->format('F j, Y') . '.',
+            'due_date.after_or_equal' => 'The new due date cannot be in the past.',
+        ]);
+
+        $fee->forceFill([
+            'previous_due_date' => $fee->due_date,
+            'due_date'          => $validated['due_date'],
+            'status'            => Fee::POSTPONED,
+            'status_reason'     => $validated['reason'] ?? null,
+            'status_changed_at' => now(),
+        ])->save();
+
+        SyncToGoogleCalendars::dispatch(GoogleCalendarEvent::FEE, $fee->id);
+        NotifyMembersOfFee::dispatch($fee->id, NotifyMembersOfFee::POSTPONED, auth_user_id());
+
+        return redirect()->route('officer.fees.show', $fee)
+            ->with('success', 'Fee postponed to ' . $fee->due_date->format('F j, Y') . '. The members who still owe it have been told.');
+    }
+
+    /**
+     * Stop collecting a fee. Nobody owes it any more; payments already made stay on
+     * record with their receipts, and those members are told to see the treasurer
+     * about a refund. Cancelling is final: the fee can no longer be edited or paid.
+     */
+    public function cancel(Request $request, Fee $fee): RedirectResponse
+    {
+        $club = $this->officerClub();
+
+        if (! $club || $fee->club_id !== $club->id) {
+            abort(403);
+        }
+
+        if ($fee->isCancelled()) {
+            return back()->with('error', self::CLOSED);
+        }
+
+        $validated = $request->validate([
+            'reason' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $fee->forceFill([
+            'status'            => Fee::CANCELLED,
+            'status_reason'     => $validated['reason'] ?? null,
+            'status_changed_at' => now(),
+        ])->save();
+
+        // Off every calendar it is still on: GoogleCalendarSync has no entry for a cancelled fee.
+        SyncToGoogleCalendars::dispatch(GoogleCalendarEvent::FEE, $fee->id);
+        NotifyMembersOfFee::dispatch($fee->id, NotifyMembersOfFee::CANCELLED, auth_user_id());
+
+        return redirect()->route('officer.fees.show', $fee)
+            ->with('success', 'Fee cancelled. Its members have been told.');
     }
 
     public function markPaid(Fee $fee, User $user): RedirectResponse
@@ -169,6 +267,10 @@ class FeeController extends Controller
 
         if (! $club || $fee->club_id !== $club->id) {
             abort(403);
+        }
+
+        if ($fee->isCancelled()) {
+            return back()->with('error', self::CLOSED);
         }
 
         $payment = FeePayment::firstOrNew([
@@ -189,6 +291,8 @@ class FeeController extends Controller
 
         // Paid up: the due-date reminder comes off this member's Google Calendar.
         SyncGoogleCalendarUsers::dispatch(GoogleCalendarEvent::FEE, $fee->id, [$user->id]);
+
+        NotifyMembersOfFee::dispatch($fee->id, NotifyMembersOfFee::PAID, auth_user_id(), $user->id);
 
         return back();
     }
@@ -231,6 +335,10 @@ class FeeController extends Controller
             abort(403);
         }
 
+        if ($fee->isCancelled()) {
+            return back()->with('error', self::CLOSED);
+        }
+
         FeePayment::where('fee_id', $fee->id)
             ->where('user_id', $user->id)
             ->update([
@@ -240,6 +348,8 @@ class FeeController extends Controller
             ]);
 
         SyncGoogleCalendarUsers::dispatch(GoogleCalendarEvent::FEE, $fee->id, [$user->id]);
+
+        NotifyMembersOfFee::dispatch($fee->id, NotifyMembersOfFee::UNPAID, auth_user_id(), $user->id);
 
         return back();
     }
