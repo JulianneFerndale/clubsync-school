@@ -2,10 +2,9 @@
 
 namespace App\Http\Controllers;
 
+use App\Support\PublicUpload;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
-use Illuminate\Support\Str;
 use Illuminate\View\View;
 
 class ProfileController extends Controller
@@ -30,14 +29,11 @@ class ProfileController extends Controller
             return redirect()->route('login');
         }
 
-        // Delete the old photo if it was locally stored
-        if ($user->profile_photo_url && Str::startsWith($user->profile_photo_url, '/storage/')) {
-            Storage::disk('public')->delete(Str::after($user->profile_photo_url, '/storage/'));
-        }
+        PublicUpload::delete($user->profile_photo_url);
 
         $path = $request->file('photo')->store('profile-photos', 'public');
 
-        $user->update(['profile_photo_url' => Storage::url($path)]);
+        $user->update(['profile_photo_url' => PublicUpload::url($path)]);
 
         return back()->with('success', 'Profile photo updated.');
     }
@@ -50,9 +46,7 @@ class ProfileController extends Controller
             return redirect()->route('login');
         }
 
-        if ($user->profile_photo_url && Str::startsWith($user->profile_photo_url, '/storage/')) {
-            Storage::disk('public')->delete(Str::after($user->profile_photo_url, '/storage/'));
-        }
+        PublicUpload::delete($user->profile_photo_url);
 
         $user->update(['profile_photo_url' => null]);
 

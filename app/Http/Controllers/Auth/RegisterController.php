@@ -15,12 +15,12 @@ use App\Services\AuthManager;
 use App\Services\EnrollmentCheck;
 use App\Services\EnrollmentVerifier;
 use App\Services\SessionManager;
+use App\Support\PublicUpload;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rules\Password;
 use Illuminate\View\View;
 
@@ -111,7 +111,7 @@ class RegisterController extends Controller
         // Store the optional profile photo now and carry its URL through the
         // remaining steps (a file can't live in the session).
         if ($request->hasFile('photo')) {
-            session(['register.photo_url' => Storage::url($request->file('photo')->store('profile-photos', 'public'))]);
+            session(['register.photo_url' => PublicUpload::url($request->file('photo')->store('profile-photos', 'public'))]);
         }
 
         RegistrationDraft::saveFromSession();

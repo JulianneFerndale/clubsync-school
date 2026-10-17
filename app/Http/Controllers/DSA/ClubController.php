@@ -10,9 +10,9 @@ use App\Models\College;
 use App\Models\User;
 use App\Rules\FacebookPageUrl;
 use App\Services\ClubDeletion;
+use App\Support\PublicUpload;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\View\View;
 
@@ -78,7 +78,7 @@ class ClubController extends Controller
         $logoUrl = null;
         if ($request->hasFile('logo')) {
             $path    = $request->file('logo')->store('clubs/logos', 'public');
-            $logoUrl = Storage::url($path);
+            $logoUrl = PublicUpload::url($path);
         }
 
         $club = Club::create([
@@ -152,19 +152,15 @@ class ClubController extends Controller
         ]);
 
         if ($request->hasFile('logo')) {
-            // Delete old logo if it was stored locally
-            if ($club->profile_photo_url && Str::startsWith($club->profile_photo_url, '/storage/')) {
-                Storage::disk('public')->delete(Str::after($club->profile_photo_url, '/storage/'));
-            }
+            // Delete old logo if it was one of our uploads
+            PublicUpload::delete($club->profile_photo_url);
             $path = $request->file('logo')->store('clubs/logos', 'public');
-            $validated['profile_photo_url'] = Storage::url($path);
+            $validated['profile_photo_url'] = PublicUpload::url($path);
         }
 
         if ($request->hasFile('banner')) {
-            if ($club->banner_image && Str::startsWith($club->banner_image, '/storage/')) {
-                Storage::disk('public')->delete(Str::after($club->banner_image, '/storage/'));
-            }
-            $validated['banner_image'] = Storage::url($request->file('banner')->store('clubs/banners', 'public'));
+            PublicUpload::delete($club->banner_image);
+            $validated['banner_image'] = PublicUpload::url($request->file('banner')->store('clubs/banners', 'public'));
         }
 
         $previousAdviserId = $club->adviser_id;

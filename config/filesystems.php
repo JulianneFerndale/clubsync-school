@@ -38,10 +38,13 @@ return [
             'report' => false,
         ],
 
+        // Club logos and banners, profile photos. Stored by URL, so the URL stays a
+        // path: the same site is opened as clubsyncing.test and localhost:8000.
+        // On Laravel Cloud a bucket attached under the disk name "public" replaces this.
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),
-            'url' => rtrim(env('APP_URL', 'http://localhost'), '/').'/storage',
+            'url' => '/storage',
             'visibility' => 'public',
             'throw' => false,
             'report' => false,
