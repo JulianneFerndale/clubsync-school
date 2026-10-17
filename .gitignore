@@ -35,6 +35,9 @@ Thumbs.db
 # Browser-test screenshots and downloads (they show signed-in pages and receipts)
 /.playwright-mcp/
 
+# The DSA's blank report templates are published by ReportTemplateSeeder, so they ship
+!/docs/resources-dsa/*.docx
+
 # Real student ID and COE used to try enrollment verification by hand
 /docs/id-front.jpeg
 /docs/id-back.jpeg
