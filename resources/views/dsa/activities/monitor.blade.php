@@ -30,7 +30,7 @@
 
             <select name="approval_status" class="border border-gray-300 rounded-lg text-xs px-2.5 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-[#07873e]/30">
                 <option value="">All Statuses</option>
-                @foreach(['no_approval_needed' => 'No Approval Needed', 'pending_approval' => 'Pending Approval', 'approved' => 'Approved', 'rejected' => 'Rejected'] as $value => $label)
+                @foreach(\App\Models\ClubActivity::APPROVAL_LABELS as $value => $label)
                     <option value="{{ $value }}" {{ request('approval_status') === $value ? 'selected' : '' }}>{{ $label }}</option>
                 @endforeach
             </select>

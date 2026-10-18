@@ -350,6 +350,122 @@ PROMPT;
     }
 
     /**
+     * Draft the body of the room booking letter an activity is sent to the Vice
+     * President for Administration with (POLICY.md §Event Creation).
+     *
+     * Only the body: the letterhead, the greeting, the closing and the three signature
+     * blocks are fixed by BookingLetter, so a line the model adds of its own ("Dear…",
+     * "Thank you") is removed rather than printed twice. A draft that does not name the
+     * room it asks for is not a booking letter, and is discarded so the officer starts
+     * from the template instead.
+     *
+     * A DRAFT for the officer to read and edit on the activity form; it is sent only
+     * when they press Send (POLICY.md §AI & Automation).
+     *
+     * @param  array{club: string, title: string, type: string, date: string, time: string, venue: string, description: string, purpose: string, participants: int|null, year_levels: string}  $facts
+     */
+    public function draftBookingLetter(array $facts): ?string
+    {
+        if (! $this->isReady()) {
+            return null;
+        }
+
+        $participants = $facts['participants'] ? (string) $facts['participants'] : 'not given';
+
+        $prompt = <<<PROMPT
+You are helping an officer of {$facts['club']}, a student club at Saint Columban College in Pagadian City, Philippines, write the body of a formal letter to the school's Vice President for Administration asking to book a room for a club activity.
+
+Activity: {$facts['title']}
+Kind of activity: {$facts['type']}
+Date: {$facts['date']}
+Time: {$facts['time']}
+Room: {$facts['venue']}
+Description: {$facts['description']}
+Purpose / objectives: {$facts['purpose']}
+Expected participants: {$participants}
+Year levels: {$facts['year_levels']}
+
+This is the style the school expects (an example for a different club and activity — do not copy its details):
+"The Dreamhunters Esports Society will be holding its General Assembly this coming Friday afternoon October 4, 2025, from 1:00 to 5:00 PM at PC 2-1. The main goal of this event is to gather our members, present the plans and activities of the organization, and strengthen unity among the students. We will ensure the rooms are kept clean and tidy after the event."
+
+Write the body in 1 or 2 short paragraphs:
+- Written for the club, in the first person plural ("we", "our").
+- State the activity, the date, the time and the room exactly as given above, and what the activity is for.
+- Respectfully ask to use the room, and promise it will be kept clean and orderly after the activity.
+- Use ONLY the details above. Do not invent budgets, speakers, names, sponsors or anything else not given.
+- Do NOT write a greeting, a "Dear…" line, a closing ("Thank you", "We look forward to your approval", "Sincerely") or a signature — those are already printed on the letter.
+- Plain text only, no markdown. Separate paragraphs with one blank line.
+PROMPT;
+
+        try {
+            $response = $this->generate([
+                'contents' => [
+                    [
+                        'parts' => [['text' => $prompt]],
+                    ],
+                ],
+                'generationConfig' => [
+                    'temperature'     => 0.5,
+                    'maxOutputTokens' => self::SHORT_OUTPUT_TOKENS,
+                    'thinkingConfig'  => ['thinkingBudget' => 0],
+                ],
+            ], 15);
+
+            if (! $response->successful()) {
+                Log::warning('Gemini API error: ' . $response->body());
+                return null;
+            }
+
+            $text = $this->answerText($response, 'draftBookingLetter');
+
+            return $text === null ? null : $this->letterBody($text, $facts['venue']);
+        } catch (\Throwable $e) {
+            Log::warning('GeminiService::draftBookingLetter failed: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * The model's letter with any greeting, closing or signature lines taken out, or
+     * null when what is left does not name the room the letter asks for.
+     */
+    private function letterBody(string $text, string $venue): ?string
+    {
+        $fixed = '/^(dear\b|panagdait\b|greetings\b|good (day|morning|afternoon)\b|thank you\b|we look forward\b|sincerely\b|respectfully( yours)?\b|in saint columban\b|noted by\b|approved by\b)/i';
+
+        $paragraphs = preg_split("/\R\s*\R/", str_replace(['**', '__'], '', trim($text))) ?: [];
+
+        $kept = [];
+
+        foreach ($paragraphs as $paragraph) {
+            $lines = array_filter(
+                array_map('trim', preg_split('/\R/', $paragraph) ?: []),
+                fn (string $line) => $line !== '' && ! preg_match($fixed, $line),
+            );
+
+            if ($lines) {
+                $kept[] = implode(' ', $lines);
+            }
+        }
+
+        $body = trim(implode("\n\n", $kept));
+
+        // A closing run on at the end of the last paragraph, rather than on its own line.
+        do {
+            $before = $body;
+            $body = trim((string) preg_replace('/\s*(we look forward to your[^.!]*[.!]|thank you[^.!]*[.!])\s*$/i', '', $body));
+        } while ($body !== $before);
+
+        if ($body === '' || ! str_contains(mb_strtolower($body), mb_strtolower($venue))) {
+            Log::warning('GeminiService::draftBookingLetter returned a letter that does not name the room; using the template.');
+
+            return null;
+        }
+
+        return $body;
+    }
+
+    /**
      * The roster split by year level, for the prompt — " (1st Year: 4, 3rd Year: 9)".
      *
      * Year levels nobody is in are left out rather than written as zero: a club with

@@ -73,11 +73,31 @@
 
     @if($event->approval_letter_path)
         <a href="{{ route('adviser.activities.letter', $event) }}" class="text-sm text-[#07873e] font-semibold underline">
-            View uploaded approval letter
+            View uploaded supporting document
         </a>
     @endif
 
-    @if($event->approval_status === 'rejected' && $event->review_remarks)
+    {{-- The room booking letter and where it stands --}}
+    @if($letter)
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+            <p class="text-sm font-semibold text-gray-700 mb-3">Approval</p>
+            <x-booking-letter-progress :event="$event" />
+        </div>
+
+        @if($event->isAwaitingVpa())
+            <div class="bg-[#F9A825]/10 border border-[#F9A825]/40 rounded-xl px-4 py-3 text-sm text-gray-700">
+                The letter is with the Vice President for Administration. You can confirm the activity once they approve it.
+            </div>
+        @endif
+
+        <details class="group" @if($event->approval_status === 'pending_approval') open @endif>
+            <summary class="cursor-pointer text-sm font-semibold text-gray-700 flex items-center justify-between">
+                The room booking letter
+                <a href="{{ route('adviser.activities.booking-letter', $event) }}" class="text-xs text-[#07873e] font-semibold underline">Download PDF</a>
+            </summary>
+            <x-booking-letter :letter="$letter" class="mt-3" />
+        </details>
+    @elseif($event->approval_status === 'rejected' && $event->review_remarks)
         <div class="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
             Remarks: {{ $event->review_remarks }}
         </div>
@@ -85,11 +105,20 @@
 
     {{-- Approve / Reject --}}
     @if($event->approval_status === 'pending_approval')
+        @if($letter)
+            <p class="text-xs text-gray-500">
+                Approving confirms the activity and signs the letter under "Noted by".
+                @unless($hasSignature)
+                    You have no signature on file, so it will say it was signed electronically.
+                    <a href="{{ route('profile') }}#signature" class="text-[#07873e] font-semibold underline">Add a signature</a>.
+                @endunless
+            </p>
+        @endif
         <div class="flex items-center gap-2">
             <form method="POST" action="{{ route('adviser.activities.approve', $event) }}">
                 @csrf
                 <button type="submit" class="bg-[#07873e] text-white text-sm font-semibold rounded-lg px-4 py-2 hover:opacity-90 transition-opacity">
-                    Approve
+                    {{ $letter ? 'Approve & Sign' : 'Approve' }}
                 </button>
             </form>
             <button type="button" onclick="document.getElementById('reject-form').classList.toggle('hidden')"

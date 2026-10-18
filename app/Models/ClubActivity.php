@@ -58,10 +58,27 @@ class ClubActivity extends Model
         'created_by', 'post_report_content', 'post_report_status',
         'activity_type', 'target_year_levels', 'approval_status', 'review_remarks',
         'approval_letter_path', 'approved_at', 'approved_by',
+        'letter_body', 'letter_ai_drafted', 'letter_signatures',
+        'vpa_decision', 'vpa_reviewed_by', 'vpa_reviewed_at',
     ];
 
     /** approval_status values in which an activity counts as confirmed (POLICY.md § Event Creation). */
     public const CONFIRMED_APPROVAL_STATUSES = ['no_approval_needed', 'approved'];
+
+    /**
+     * Still waiting on someone's approval: the room booking letter is with the VPA, or
+     * the VPA has approved it and it is with the club adviser.
+     */
+    public const AWAITING_APPROVAL_STATUSES = ['pending_vpa', 'pending_approval'];
+
+    /** How each approval_status reads to the people following an activity. */
+    public const APPROVAL_LABELS = [
+        'no_approval_needed' => 'No Approval Needed',
+        'pending_vpa'        => 'Awaiting VPA',
+        'pending_approval'   => 'Awaiting Adviser',
+        'approved'           => 'Approved',
+        'rejected'           => 'Rejected',
+    ];
 
     protected $casts = [
         'date'                  => 'date',
@@ -70,6 +87,9 @@ class ClubActivity extends Model
         'approved_at'           => 'datetime',
         'completed_at'          => 'datetime',
         'target_year_levels'    => 'array',
+        'letter_ai_drafted'     => 'boolean',
+        'letter_signatures'     => 'array',
+        'vpa_reviewed_at'       => 'datetime',
     ];
 
     /**
@@ -134,6 +154,57 @@ class ClubActivity extends Model
         return $this->belongsTo(User::class, 'approved_by');
     }
 
+    /** The VPA account that approved or returned the room booking letter. */
+    public function vpaReviewer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'vpa_reviewed_by');
+    }
+
+    /** Whether this activity goes through the VPA and the adviser: everything but an internal meeting. */
+    public function needsApproval(): bool
+    {
+        return ! $this->isMeeting();
+    }
+
+    /**
+     * Whether this activity carries a room booking letter: everything submitted for
+     * approval since the VPA step began. Older activities went to the adviser alone.
+     */
+    public function hasBookingLetter(): bool
+    {
+        return $this->letter_body !== null;
+    }
+
+    /** The room booking letter is with the VPA. */
+    public function isAwaitingVpa(): bool
+    {
+        return $this->approval_status === 'pending_vpa';
+    }
+
+    /** The VPA, not the adviser, turned the letter down. */
+    public function wasRejectedByVpa(): bool
+    {
+        return $this->approval_status === 'rejected' && $this->vpa_decision === 'rejected';
+    }
+
+    /**
+     * One signer's entry on the letter: name, position, when they signed and the
+     * signature they signed with (null when they had none on file).
+     *
+     * @param  'officer'|'vpa'|'adviser'  $role
+     * @return array{user_id: int|null, name: string, position: string, signed_at: string, signature_path: string|null}|null
+     */
+    public function letterSignature(string $role): ?array
+    {
+        return $this->letter_signatures[$role] ?? null;
+    }
+
+    public function getApprovalStatusLabelAttribute(): string
+    {
+        return self::APPROVAL_LABELS[$this->approval_status]
+            ?? ucfirst(str_replace('_', ' ', (string) $this->approval_status));
+    }
+
     /** The query form of isConfirmed(): what members are told about and may see. */
     public function scopeConfirmed(Builder $query): Builder
     {
@@ -185,8 +256,8 @@ class ClubActivity extends Model
     /**
      * Activities that still hold $venue on $date.
      *
-     * Cancelled and DSA-rejected activities release their slot; everything else
-     * (scheduled, pending approval, approved, completed) keeps it.
+     * Cancelled and rejected activities release their slot; everything else
+     * (scheduled, with the VPA or the adviser, approved, completed) keeps it.
      */
     public function scopeHoldingVenue(Builder $query, string $venue, string $date, ?int $ignoreId = null): Builder
     {

@@ -4,16 +4,19 @@ namespace App\Http\Controllers\Officer;
 
 use App\Http\Controllers\Controller;
 use App\Jobs\GenerateClubNarrativeJob;
-use App\Jobs\NotifyAdviserOfActivitySubmission;
 use App\Jobs\NotifyMemberOfAttendance;
 use App\Jobs\NotifyMembersOfActivity;
+use App\Jobs\NotifyVpaOfBookingLetter;
 use App\Jobs\SyncToGoogleCalendars;
 use App\Models\ActivityChangeLog;
+use App\Models\AuditLog;
 use App\Models\Club;
 use App\Models\ClubActivity;
 use App\Models\ClubMember;
 use App\Models\ClubOfficer;
 use App\Models\GoogleCalendarEvent;
+use App\Models\User;
+use App\Services\BookingLetter;
 use App\Services\FirebaseService;
 use App\Services\GeminiService;
 use Carbon\Carbon;
@@ -88,6 +91,7 @@ class ActivityController extends Controller
     public function __construct(
         private FirebaseService $firebase,
         private GeminiService $gemini,
+        private BookingLetter $letters,
     ) {}
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -175,6 +179,21 @@ class ActivityController extends Controller
         ];
     }
 
+    /**
+     * The room booking letter must ask for the room actually being booked: a letter the
+     * VPA approves for one room while the activity holds another would book neither.
+     *
+     * @return array<string, string>|null
+     */
+    private function letterVenueError(string $body, string $venue): ?array
+    {
+        if (str_contains(mb_strtolower($body), mb_strtolower($venue))) {
+            return null;
+        }
+
+        return ['letter_body' => "The letter must name the room you are booking ({$venue}). Draft it again, or add the room to it."];
+    }
+
     private function officerClub(): ?\App\Models\Club
     {
         return ClubOfficer::where('user_id', auth_user_id())
@@ -259,6 +278,8 @@ class ActivityController extends Controller
             'target_year_levels'    => ['nullable', 'array'],
             'target_year_levels.*'  => ['integer', 'between:1,4'],
             'approval_letter'       => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
+            'letter_body'           => ['nullable', 'string', 'max:5000'],
+            'letter_ai_drafted'     => ['nullable', 'boolean'],
         ], [
             'title.required'                  => 'Activity Title is required.',
             'description.required'            => 'Description is required.',
@@ -298,8 +319,19 @@ class ActivityController extends Controller
             }
         }
 
-        // Internal meetings are auto-approved; everything else requires DSA sign-off.
+        // Internal meetings are scheduled outright. Everything else is sent to the VPA with
+        // a room booking letter, then to the club adviser (POLICY.md §Event Creation).
         $needsApproval = $validated['activity_type'] !== 'internal_meeting';
+
+        // The officer read this letter on the form (the AI's draft or their own words)
+        // before pressing Send; with none written, it is the template, which no AI wrote.
+        $letterBody = trim((string) ($validated['letter_body'] ?? ''));
+
+        if ($needsApproval && $letterBody !== '' && ($error = $this->letterVenueError($letterBody, $validated['venue']))) {
+            return back()->withInput()->withErrors($error);
+        }
+
+        $officer = User::find(auth_user_id());
 
         $approvalLetterPath = null;
         if ($request->hasFile('approval_letter')) {
@@ -318,14 +350,22 @@ class ActivityController extends Controller
             'expected_participants' => $validated['expected_participants'],
             'activity_type'         => $validated['activity_type'],
             'target_year_levels'    => $this->normalizeYearLevels($request),
-            'approval_status'       => $needsApproval ? 'pending_approval' : 'no_approval_needed',
+            'approval_status'       => $needsApproval ? 'pending_vpa' : 'no_approval_needed',
             'approval_letter_path'  => $approvalLetterPath,
             'status'                => 'scheduled',
             'created_by'            => auth_user_id(),
+            'letter_body'           => $needsApproval ? ($letterBody !== '' ? $letterBody : BookingLetter::templateBody($club->name, $validated)) : null,
+            'letter_ai_drafted'     => $needsApproval && $letterBody !== '' && $request->boolean('letter_ai_drafted'),
+            // The officer's signature goes on as they send it.
+            'letter_signatures'     => $needsApproval && $officer
+                ? ['officer' => $this->letters->sign($officer, BookingLetter::officerPosition($club, $officer))]
+                : null,
         ]);
 
         if ($needsApproval) {
-            NotifyAdviserOfActivitySubmission::dispatch($event->id);
+            AuditLog::record('activity.letter.sent', $event, ['club_id' => $club->id, 'venue' => $event->venue, 'ai_drafted' => $event->letter_ai_drafted]);
+
+            NotifyVpaOfBookingLetter::dispatch($event->id);
         } else {
             // Already confirmed, so members can be told straight away. Activities
             // awaiting the adviser's sign-off announce themselves on approval instead.
@@ -350,8 +390,100 @@ class ActivityController extends Controller
         // Confirmed activities (internal meetings) go onto members' Google Calendars in the background.
         SyncToGoogleCalendars::dispatch(GoogleCalendarEvent::ACTIVITY, $event->id);
 
+        if ($needsApproval) {
+            return redirect()->route('officer.activities.show', $event)
+                ->with('success', 'Activity saved. Your room booking letter was signed and sent to the Vice President for Administration.');
+        }
+
         return redirect()->route('officer.activities.index')
             ->with('success', 'Activity successfully scheduled!');
+    }
+
+    /**
+     * Draft the body of the room booking letter from what the officer has filled in.
+     *
+     * Gemini writes it when it can; otherwise the template does, from the same fields, so
+     * the officer always gets a letter to start from (POLICY.md §AI & Automation). The
+     * draft goes back to the form only: nothing is saved or sent until the officer reads
+     * it and presses Send.
+     */
+    public function letterDraft(Request $request): \Illuminate\Http\JsonResponse
+    {
+        $club = $this->officerClub();
+
+        if (! $club) {
+            return response()->json(['error' => 'You are not assigned to any club.'], 403);
+        }
+
+        $this->normalizeTimes($request);
+
+        $validated = $request->validate([
+            'title'                 => ['required', 'string', 'max:255'],
+            'description'           => ['nullable', 'string', 'max:2000'],
+            'date'                  => ['required', 'date'],
+            'time_start'            => ['required', 'date_format:H:i'],
+            'time_end'              => ['required', 'date_format:H:i', 'after:time_start'],
+            'venue'                 => ['required', 'string', 'max:255'],
+            'purpose'               => ['nullable', 'string', 'max:2000'],
+            'expected_participants' => ['nullable', 'integer', 'min:1'],
+            'activity_type'         => ['nullable', 'string', Rule::in(array_keys(ClubActivity::TYPE_LABELS))],
+            'target_year_levels'    => ['nullable', 'array'],
+            'target_year_levels.*'  => ['integer', 'between:1,4'],
+        ], [
+            'title.required'      => 'Fill in the activity title first.',
+            'date.required'       => 'Pick the date first.',
+            'time_start.required' => 'Set the start time first.',
+            'time_end.required'   => 'Set the end time first.',
+            'time_end.after'      => 'End time must be after start time.',
+            'venue.required'      => 'Choose the room first.',
+        ]);
+
+        $levels = $this->normalizeYearLevels($request);
+
+        $body = $this->gemini->draftBookingLetter([
+            'club'         => $club->name,
+            'title'        => $validated['title'],
+            'type'         => ClubActivity::TYPE_LABELS[$validated['activity_type'] ?? ''] ?? 'Club activity',
+            'date'         => Carbon::parse($validated['date'])->format('l, F j, Y'),
+            'time'         => Carbon::parse($validated['time_start'])->format('g:i A') . ' to ' . Carbon::parse($validated['time_end'])->format('g:i A'),
+            'venue'        => $validated['venue'],
+            'description'  => $validated['description'] ?? '',
+            'purpose'      => $validated['purpose'] ?? '',
+            'participants' => $validated['expected_participants'] ?? null,
+            'year_levels'  => $levels ? collect($levels)->map(fn (int $level) => year_level_label($level))->implode(', ') : 'All year levels',
+        ]);
+
+        if ($body !== null) {
+            AuditLog::record('ai.booking_letter.drafted', null, ['club_id' => $club->id]);
+        }
+
+        return response()->json([
+            'body'   => $body ?? BookingLetter::templateBody($club->name, [
+                'title'                 => $validated['title'],
+                'date'                  => $validated['date'],
+                'time_start'            => $validated['time_start'],
+                'time_end'              => $validated['time_end'],
+                'venue'                 => $validated['venue'],
+                'purpose'               => $validated['purpose'] ?? '',
+                'expected_participants' => $validated['expected_participants'] ?? 0,
+            ]),
+            'ai'     => $body !== null,
+            'notice' => $body !== null
+                ? 'AI-assisted draft — read it and change anything that is not right before you send it.'
+                : 'AI Unavailable — Manual Draft Required. The letter was written from the template; read it and change it as needed before you send it.',
+        ]);
+    }
+
+    /** The activity's room booking letter as a PDF, with every signature given so far. */
+    public function bookingLetter(ClubActivity $event)
+    {
+        $club = $this->officerClub();
+
+        if (! $club || $event->club_id !== $club->id || ! $event->hasBookingLetter()) {
+            abort(404);
+        }
+
+        return $this->letters->pdf($event)->download($this->letters->filename($event));
     }
 
     /**
@@ -471,7 +603,7 @@ class ActivityController extends Controller
             abort(403);
         }
 
-        $event->load('club', 'creator', 'changeLogs.changedBy', 'photos.uploader');
+        $event->load('club', 'creator', 'vpaReviewer', 'approvedBy', 'changeLogs.changedBy', 'photos.uploader');
 
         $attendanceCount = $event->attendance()->whereNotNull('time_in')->count();
 
@@ -521,6 +653,8 @@ class ActivityController extends Controller
             'target_year_levels'    => ['nullable', 'array'],
             'target_year_levels.*'  => ['integer', 'between:1,4'],
             'approval_letter'       => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
+            'letter_body'           => ['nullable', 'string', 'max:5000'],
+            'letter_ai_drafted'     => ['nullable', 'boolean'],
         ], [
             'title.required'                  => 'Activity Title is required.',
             'description.required'            => 'Description is required.',
@@ -545,24 +679,81 @@ class ActivityController extends Controller
         // explicitly rather than relying on the validated array (which would omit it).
         $validated['target_year_levels'] = $this->normalizeYearLevels($request);
 
+        $letterBody = trim((string) ($validated['letter_body'] ?? ''));
+        unset($validated['letter_body'], $validated['letter_ai_drafted']);
+
         $before = $event->only([
             'title', 'description', 'date', 'time_start', 'time_end',
             'venue', 'purpose', 'expected_participants', 'activity_type', 'approval_status',
         ]);
         $before['date'] = $event->date->toDateString();
 
-        $wasApprovedAndNowNeedsReapproval = $event->approval_status === 'approved'
-            && $validated['activity_type'] !== 'internal_meeting';
+        // The fields the officer actually changed. Times compare at H:i and the date as a
+        // date, because the stored values read back as "07:10:00" and a Carbon.
+        $edited = array_values(array_filter(
+            ['title', 'description', 'date', 'time_start', 'time_end', 'venue', 'purpose', 'expected_participants', 'activity_type'],
+            fn (string $key) => match ($key) {
+                'date'                   => Carbon::parse($validated['date'])->toDateString() !== $before['date'],
+                'time_start', 'time_end' => substr((string) $validated[$key], 0, 5) !== substr((string) $before[$key], 0, 5),
+                default                  => (string) $validated[$key] !== (string) $before[$key],
+            },
+        ));
+
+        $needsApproval = $validated['activity_type'] !== 'internal_meeting';
+        $letterEdited  = $needsApproval && $letterBody !== '' && $letterBody !== (string) $event->letter_body;
+        $changed       = $edited || $letterEdited || $request->hasFile('approval_letter')
+            || $validated['target_year_levels'] != ($event->target_year_levels ?: null);
+
+        // POLICY.md §Event Creation: a changed activity that needs approval goes back to
+        // the VPA with a re-signed letter, whatever stage it had reached: approved, with
+        // the adviser, or returned (which is how a returned letter is sent again). So does
+        // an internal meeting turned into an activity that needs approval.
+        $resubmit = $needsApproval && ($event->approval_status === 'no_approval_needed' || $changed);
+
+        if ($resubmit) {
+            $material = array_intersect(['title', 'date', 'time_start', 'time_end', 'venue'], $edited);
+
+            // A letter still describing the old title, date, time or room is not sent as it
+            // is: the officer drafts it again, or rewrites it themselves.
+            if ($material && $event->letter_body !== null && ! $letterEdited) {
+                $what = implode(', ', array_map(fn (string $field) => str_replace('_', ' ', $field), $material));
+
+                return back()->withInput()->withErrors([
+                    'letter_body' => "You changed the {$what}, but the letter still describes the activity as it was. Draft it again, or edit it to match, before sending.",
+                ]);
+            }
+
+            $letterBody = $letterBody !== '' ? $letterBody : ($event->letter_body ?? BookingLetter::templateBody($club->name, $validated));
+
+            if ($error = $this->letterVenueError($letterBody, $validated['venue'])) {
+                return back()->withInput()->withErrors($error);
+            }
+        }
 
         if ($request->hasFile('approval_letter')) {
             $validated['approval_letter_path'] = $request->file('approval_letter')->store('approval-letters', 'local');
         }
 
-        if ($validated['activity_type'] === 'internal_meeting') {
+        $wasWithVpa = $event->approval_status === 'pending_vpa';
+
+        if (! $needsApproval) {
             $validated['approval_status'] = 'no_approval_needed';
-        } elseif ($wasApprovedAndNowNeedsReapproval) {
-            $validated['approval_status'] = 'pending_approval';
-            $validated['review_remarks']  = null;
+        } elseif ($resubmit) {
+            $officer = User::find(auth_user_id());
+
+            $validated += [
+                'approval_status'   => 'pending_vpa',
+                'review_remarks'    => null,
+                'approved_by'       => null,
+                'approved_at'       => null,
+                'vpa_decision'      => null,
+                'vpa_reviewed_by'   => null,
+                'vpa_reviewed_at'   => null,
+                'letter_body'       => $letterBody,
+                'letter_ai_drafted' => $letterEdited ? $request->boolean('letter_ai_drafted') : (bool) $event->letter_ai_drafted,
+                // Signed again by whoever sends it this time; the VPA and adviser sign afresh.
+                'letter_signatures' => $officer ? ['officer' => $this->letters->sign($officer, BookingLetter::officerPosition($club, $officer))] : null,
+            ];
         }
 
         $event->update($validated);
@@ -596,8 +787,13 @@ class ActivityController extends Controller
             ]);
         }
 
-        if ($wasApprovedAndNowNeedsReapproval) {
-            NotifyAdviserOfActivitySubmission::dispatch($event->id);
+        if ($resubmit) {
+            AuditLog::record('activity.letter.sent', $event, ['club_id' => $club->id, 'venue' => $event->venue, 'resent' => true]);
+
+            // Already in the VPA's queue: they see the new letter there, with no second notice.
+            if (! $wasWithVpa) {
+                NotifyVpaOfBookingLetter::dispatch($event->id);
+            }
         }
 
         // Tell members only when something they would actually turn up for moved.
@@ -615,7 +811,9 @@ class ActivityController extends Controller
         SyncToGoogleCalendars::dispatch(GoogleCalendarEvent::ACTIVITY, $event->id);
 
         return redirect()->route('officer.activities.show', $event)
-            ->with('success', 'Activity updated.' . ($wasApprovedAndNowNeedsReapproval ? ' DSA approval is required again before this activity is confirmed.' : ''));
+            ->with('success', 'Activity updated.' . ($resubmit
+                ? ' The room booking letter was signed again and sent to the Vice President for Administration, so it needs their approval and the adviser\'s again.'
+                : ''));
     }
 
     public function downloadLetter(ClubActivity $event)

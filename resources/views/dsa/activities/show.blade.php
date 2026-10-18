@@ -62,13 +62,27 @@
 
     @if($event->approval_letter_path)
         <a href="{{ route('dsa.activities.letter', $event) }}" class="text-sm text-[#07873e] font-semibold underline">
-            View uploaded approval letter
+            View uploaded supporting document
         </a>
     @endif
 
-    @if($event->approval_status === 'rejected' && $event->review_remarks)
+    @if($letter)
+        <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+            <div class="flex items-center justify-between mb-3">
+                <p class="text-sm font-semibold text-gray-700">Room Booking Letter</p>
+                <a href="{{ route('dsa.activities.booking-letter', $event) }}" class="text-xs text-[#07873e] font-semibold underline">Download PDF</a>
+            </div>
+            <x-booking-letter-progress :event="$event" />
+        </div>
+    @elseif($event->approval_status === 'rejected' && $event->review_remarks)
         <div class="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
             Adviser's remarks: {{ $event->review_remarks }}
+        </div>
+    @endif
+
+    @if($event->isAwaitingVpa())
+        <div class="bg-[#F9A825]/10 border border-[#F9A825]/40 rounded-xl px-4 py-3">
+            <p class="text-sm text-gray-700">Waiting on the Vice President for Administration to approve the room booking letter.</p>
         </div>
     @endif
 

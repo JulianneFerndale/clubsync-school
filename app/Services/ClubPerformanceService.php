@@ -333,7 +333,7 @@ class ClubPerformanceService
                 ->whereIn('approval_status', ClubActivity::CONFIRMED_APPROVAL_STATUSES)
                 ->filter(fn (ClubActivity $a) => $a->date->gte(today()))
                 ->count(),
-            'pending'          => $activities->where('approval_status', 'pending_approval')->count(),
+            'pending'          => $activities->whereIn('approval_status', ClubActivity::AWAITING_APPROVAL_STATUSES)->count(),
             'rejected'         => $activities->where('approval_status', 'rejected')->count(),
             'turnout'          => $turnout,
             'members'          => $members,

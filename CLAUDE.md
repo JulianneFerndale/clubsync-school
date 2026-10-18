@@ -47,9 +47,11 @@ php artisan db:seed --class=SeedAdmin
 - `guest.firebase` — blocks authenticated users from auth pages
 - `role:{role}` — enforces RBAC; the alias `officer` covers president/treasurer/mmo roles
 
-**Roles:** `admin`, `dsa`, `adviser`, `president`, `treasurer`, `mmo`, `member`
+**Roles:** `admin`, `dsa`, `vpa`, `adviser`, `president`, `treasurer`, `mmo`, `member`
 
-Controllers are grouped by role under `app/Http/Controllers/{Admin,DSA,Adviser,Officer,Member}/`.
+`vpa` is the Vice President for Administration (run by the VPA or the SSG): it approves the room booking letter every non-meeting activity is sent with, before the club adviser (`ClubActivity` `approval_status`: `pending_vpa` → `pending_approval` → `approved`). Create the account with `php artisan app:create-vpa --email=…`. The letter is composed by `App\Services\BookingLetter` (PDF via dompdf); signatures by `App\Services\SignatureStorage`.
+
+Controllers are grouped by role under `app/Http/Controllers/{Admin,DSA,VPA,Adviser,Officer,Member}/`.
 
 **Services (`app/Services/`):**
 - `AuthManager` — Firebase REST auth wrapper (login, register, password reset, token refresh)

@@ -52,7 +52,7 @@ class AcleMonitorService
 
         $acleSummary = [
             'total'     => (clone $acleBaseQuery)->count(),
-            'pending'   => (clone $acleBaseQuery)->where('approval_status', 'pending_approval')->count(),
+            'pending'   => (clone $acleBaseQuery)->whereIn('approval_status', ClubActivity::AWAITING_APPROVAL_STATUSES)->count(),
             'approved'  => (clone $acleBaseQuery)->where('approval_status', 'approved')->count(),
             'completed' => (clone $acleBaseQuery)->where('status', 'completed')->count(),
         ];

@@ -94,6 +94,7 @@ class SessionManager
     {
         return match ($role) {
             'dsa'     => Redirect::route('dsa.dashboard'),
+            'vpa'     => Redirect::route('vpa.dashboard'),
             'adviser' => Redirect::route('adviser.dashboard'),
             // Officers navigate like members; club-admin tools surface inside their own club.
             default   => Redirect::route('member.dashboard'),

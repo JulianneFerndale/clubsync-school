@@ -103,6 +103,74 @@
         </div>
     </div>
 
+    {{-- Signature for room booking letters (officers, advisers, the VPA) --}}
+    @if($user->signsLetters())
+    <div id="signature" class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 scroll-mt-20">
+        <h2 class="font-bold text-gray-900 mb-1">Signature <span class="text-xs text-gray-400 font-normal">(optional)</span></h2>
+        <p class="text-xs text-gray-500 mb-4">
+            Room booking letters are signed with it:
+            @if($user->role === 'vpa')
+                under "Approved by" when you approve one.
+            @elseif($user->role === 'adviser')
+                under "Noted by" when you confirm an activity.
+            @else
+                above your name when you send one to the VPA.
+            @endif
+            Without one, a letter says it was signed electronically. Only you see it here; others see it only on letters you have signed.
+        </p>
+
+        <div class="border border-gray-200 rounded-xl h-28 flex items-center justify-center bg-gray-50 mb-4">
+            @if($user->signature_path)
+                <img src="{{ route('profile.signature.show') }}?v={{ substr(md5($user->signature_path), 0, 8) }}" alt="Your signature" class="max-h-24 max-w-full">
+            @else
+                <span class="text-xs text-gray-400">No signature on file</span>
+            @endif
+        </div>
+
+        <form method="POST" action="{{ route('profile.signature') }}" enctype="multipart/form-data" id="signature-form" class="space-y-3">
+            @csrf
+            <input type="hidden" name="signature_drawn" id="signature-drawn">
+
+            <div>
+                <div class="flex items-center justify-between mb-1.5">
+                    <label class="text-sm font-medium text-gray-700">Draw it here</label>
+                    <button type="button" id="signature-clear" class="text-xs text-gray-500 hover:text-gray-700 underline">Clear</button>
+                </div>
+                <canvas id="signature-pad" class="w-full h-36 border-2 border-dashed border-gray-300 rounded-xl bg-white touch-none cursor-crosshair"></canvas>
+            </div>
+
+            <div>
+                <label for="signature-file" class="text-sm font-medium text-gray-700 block mb-1.5">…or upload a photo of it</label>
+                <input type="file" id="signature-file" name="signature_file" accept="image/jpeg,image/png,image/webp"
+                       class="block w-full text-xs text-gray-600 file:mr-3 file:rounded-lg file:border-0 file:bg-[#07873e]/10 file:px-3 file:py-2 file:text-[#07873e] file:font-semibold">
+                <p class="text-[11px] text-gray-400 mt-1">Sign in dark ink on plain white paper. The paper is removed so only the ink is kept. JPG, PNG or WebP, up to 4 MB.</p>
+            </div>
+
+            @error('signature')<p class="text-red-500 text-xs">{{ $message }}</p>@enderror
+            @error('signature_file')<p class="text-red-500 text-xs">{{ $message }}</p>@enderror
+            @error('signature_drawn')<p class="text-red-500 text-xs">{{ $message }}</p>@enderror
+            <p id="signature-hint" class="hidden text-red-500 text-xs">Draw your signature above, or choose a photo of it.</p>
+
+            <button type="submit"
+                    class="w-full bg-[#07873e] text-white font-semibold py-3 rounded-full hover:bg-green-900 transition-colors">
+                Save Signature
+            </button>
+        </form>
+
+        @if($user->signature_path)
+            <form method="POST" action="{{ route('profile.signature.delete') }}" class="mt-3"
+                  onsubmit="return confirm('Remove your signature? Letters you already signed keep it.')">
+                @csrf
+                @method('DELETE')
+                <button type="submit"
+                        class="w-full border border-red-200 text-red-600 font-medium py-3 rounded-full hover:bg-red-50 transition-colors text-sm">
+                    Remove Signature
+                </button>
+            </form>
+        @endif
+    </div>
+    @endif
+
     {{-- Change password --}}
     <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
         <h2 class="font-bold text-gray-900 mb-1">Change Password</h2>
@@ -166,5 +234,75 @@ input.addEventListener('change', () => {
     hint.classList.add('hidden');
     btn.disabled = false;
 });
+
+// Signature pad: strokes drawn with a finger, pen or mouse, sent as a PNG.
+(() => {
+    const canvas = document.getElementById('signature-pad');
+    const form   = document.getElementById('signature-form');
+    if (! canvas || ! form) return;
+
+    const ctx    = canvas.getContext('2d');
+    const drawn  = document.getElementById('signature-drawn');
+    const file   = document.getElementById('signature-file');
+    const hintEl = document.getElementById('signature-hint');
+    let inked = false;
+    let last  = null;
+
+    const fit = () => {
+        const ratio = window.devicePixelRatio || 1;
+        const box = canvas.getBoundingClientRect();
+        canvas.width  = Math.round(box.width * ratio);
+        canvas.height = Math.round(box.height * ratio);
+        ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = ctx.lineJoin = 'round';
+        ctx.strokeStyle = '#111827';
+        inked = false;
+    };
+    fit();
+
+    const point = (e) => {
+        const box = canvas.getBoundingClientRect();
+        return { x: e.clientX - box.left, y: e.clientY - box.top };
+    };
+
+    canvas.addEventListener('pointerdown', (e) => {
+        canvas.setPointerCapture(e.pointerId);
+        last = point(e);
+        ctx.beginPath();
+        ctx.arc(last.x, last.y, 1.2, 0, Math.PI * 2);
+        ctx.fillStyle = '#111827';
+        ctx.fill();
+        inked = true;
+    });
+    canvas.addEventListener('pointermove', (e) => {
+        if (! last) return;
+        const p = point(e);
+        ctx.beginPath();
+        ctx.moveTo(last.x, last.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        last = p;
+    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach((type) => canvas.addEventListener(type, () => { last = null; }));
+
+    document.getElementById('signature-clear')?.addEventListener('click', () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        inked = false;
+    });
+
+    form.addEventListener('submit', (e) => {
+        if (file.files.length) {
+            drawn.value = '';
+            return;
+        }
+        if (! inked) {
+            e.preventDefault();
+            hintEl.classList.remove('hidden');
+            return;
+        }
+        drawn.value = canvas.toDataURL('image/png');
+    });
+})();
 </script>
 @endsection

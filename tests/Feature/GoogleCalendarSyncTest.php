@@ -249,6 +249,11 @@ it('keeps an approval-requiring activity off calendars until the adviser approve
     $activity = ClubActivity::where('title', 'ACLE Outreach')->firstOrFail();
     expect($google->eventsOf($member))->toBeEmpty();
 
+    // The VPA approves the room booking letter first; that alone confirms nothing.
+    $this->withSession(gcSession(gcUser('vpa')))->post(route('vpa.letters.approve', $activity));
+    expect($activity->fresh()->approval_status)->toBe('pending_approval')
+        ->and($google->eventsOf($member))->toBeEmpty();
+
     $this->withSession(gcSession($adviser))->post(route('adviser.activities.approve', $activity));
     expect($google->eventsOf($member))->toHaveCount(1);
 
@@ -415,7 +420,8 @@ it('puts semester start and end dates on every institutional user\'s calendar, s
     $dsa       = gcUser('dsa');
     $student   = gcUser('member');
     $suspended = gcUser('member', ['is_suspended' => true]);
-    $outside   = gcUser('admin', ['email' => 'someone@gmail.com']);
+    // 'admin' is not a role but the is_admin flag; the users.role check refuses it.
+    $outside   = gcUser('member', ['email' => 'someone@gmail.com', 'is_admin' => true]);
 
     $this->withSession(gcSession($dsa))->post(route('dsa.semesters.store'), [
         'label'      => '1st Semester 2026-2027',

@@ -572,15 +572,23 @@ it('P3: broadcasts a real-time event to club members when an activity is updated
 });
 
 it('P3: broadcasts the review request in real time for an approval-requiring activity', function () {
+    // The room booking letter reaches the VPA live; the adviser hears once the VPA approves.
     Event::fake([NotificationCreated::class]);
 
     [$officer, , $adviser] = evAudience();
+    $vpa = evVpa();
 
     $this->withSession(evSession($officer))
         ->post(route('officer.activities.store'), evPayload([
             'title'         => 'ACLE Outreach',
             'activity_type' => 'acle',
         ]));
+
+    expect(evBroadcastRecipients())->toContain($vpa->id)
+        ->not->toContain($adviser->id);
+
+    $this->withSession(evSession($vpa))
+        ->post(route('vpa.letters.approve', ClubActivity::where('title', 'ACLE Outreach')->firstOrFail()));
 
     expect(evBroadcastRecipients())->toContain($adviser->id);
 });
@@ -611,7 +619,12 @@ it('P3: broadcasts to members the moment the adviser approves the activity', fun
         ]));
 
     $activity = ClubActivity::where('title', 'ACLE Outreach')->firstOrFail();
-    expect($activity->approval_status)->toBe('pending_approval');
+    expect($activity->approval_status)->toBe('pending_vpa');
+
+    $this->withSession(evSession(evVpa()))
+        ->post(route('vpa.letters.approve', $activity));
+
+    expect($activity->fresh()->approval_status)->toBe('pending_approval');
 
     // Only now does the member hear about it.
     Event::fake([NotificationCreated::class]);
@@ -852,9 +865,17 @@ function evWithAdviser(): array
     return [$officer, $club->fresh(), $adviser];
 }
 
-/** Submit an approval-requiring activity and return it. */
-function evSubmitForReview(User $officer, string $title = 'ACLE Outreach'): ClubActivity
+/** The Vice President for Administration's account, which approves room booking letters first. */
+function evVpa(): User
 {
+    return User::where('role', 'vpa')->first() ?? evUser('vpa');
+}
+
+/** Send an approval-requiring activity with its room booking letter, and return it (with the VPA). */
+function evSendToVpa(User $officer, string $title = 'ACLE Outreach'): ClubActivity
+{
+    evVpa();
+
     test()->withSession(evSession($officer))
         ->post(route('officer.activities.store'), evPayload([
             'title'         => $title,
@@ -862,6 +883,24 @@ function evSubmitForReview(User $officer, string $title = 'ACLE Outreach'): Club
         ]));
 
     return ClubActivity::where('title', $title)->firstOrFail();
+}
+
+/**
+ * Submit an approval-requiring activity and have the VPA approve its letter, so it
+ * reaches the adviser's queue (POLICY.md §Event Creation: VPA first, then adviser).
+ */
+function evSubmitForReview(User $officer, string $title = 'ACLE Outreach'): ClubActivity
+{
+    $activity = evSendToVpa($officer, $title);
+
+    test()->withSession(evSession(evVpa()))
+        ->post(route('vpa.letters.approve', $activity));
+
+    // The VPA's "Approved and signed" flash names the activity; it belongs to their
+    // session, not to whoever the test signs in next.
+    test()->flushSession();
+
+    return $activity->fresh();
 }
 
 it('A1: puts an approval-requiring activity in its own adviser queue', function () {
@@ -1054,9 +1093,9 @@ it('A3: is not reachable by an officer or a member', function (string $role) {
     expect($activity->fresh()->approval_status)->toBe('pending_approval');
 })->with(['officer', 'member']);
 
-it('A4: sends an edited approved activity back to the adviser', function () {
-    // POLICY: editing an approved non-internal activity resets it to pending and
-    // notifies the reviewer again — who is now the adviser.
+it('A4: sends an edited approved activity back to the VPA, then the adviser', function () {
+    // POLICY: editing an approved non-internal activity resets it, and the letter goes
+    // back to the first reviewer — the VPA — signed again, before the adviser sees it.
     [$officer, , $adviser] = evWithAdviser();
     $activity = evSubmitForReview($officer);
 
@@ -1065,17 +1104,24 @@ it('A4: sends an edited approved activity back to the adviser', function () {
 
     expect($activity->fresh()->approval_status)->toBe('approved');
 
-    ClubNotification::where('recipient_id', $adviser->id)->delete();
+    $vpa = evVpa();
+    ClubNotification::whereIn('recipient_id', [$adviser->id, $vpa->id])->delete();
 
     $this->withSession(evSession($officer))
         ->patch(route('officer.activities.update', $activity), evPayload([
             'title'         => 'ACLE Outreach',
             'activity_type' => 'acle',
             'venue'         => 'Library',
+            'letter_body'   => 'We will hold our ACLE Outreach in the Library instead. We will keep the Library clean and orderly.',
         ]));
 
-    expect($activity->fresh()->approval_status)->toBe('pending_approval')
-        ->and(ClubNotification::where('recipient_id', $adviser->id)->count())->toBeGreaterThan(0);
+    $fresh = $activity->fresh();
+
+    expect($fresh->approval_status)->toBe('pending_vpa')
+        ->and($fresh->letterSignature('vpa'))->toBeNull()
+        ->and($fresh->letterSignature('adviser'))->toBeNull()
+        ->and(ClubNotification::where('recipient_id', $vpa->id)->count())->toBeGreaterThan(0)
+        ->and(ClubNotification::where('recipient_id', $adviser->id)->where('title', 'Activity to review')->count())->toBe(0);
 });
 
 // ── An activity cannot be scheduled into the past ───────────────────────────

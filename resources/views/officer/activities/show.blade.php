@@ -73,19 +73,35 @@
         <p class="text-sm text-gray-700 leading-relaxed">{{ $event->purpose }}</p>
     </div>
 
-    {{-- DSA approval (non-internal activities) --}}
+    {{-- Approval: the VPA's, then the adviser's (non-internal activities) --}}
     @if($event->activity_type !== 'internal_meeting')
-    <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-2">
+    <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-3">
         <div class="flex items-center justify-between">
-            <p class="text-sm font-semibold text-gray-700">DSA Approval</p>
+            <p class="text-sm font-semibold text-gray-700">{{ $event->hasBookingLetter() ? 'Room Booking Letter' : 'Adviser Approval' }}</p>
             <x-status-badge :status="$event->approval_status" />
         </div>
-        @if($event->approval_status === 'rejected' && $event->review_remarks)
+
+        @if($event->hasBookingLetter())
+            <x-booking-letter-progress :event="$event" />
+
+            <div class="flex flex-wrap gap-x-4 gap-y-2 pt-1">
+                <a href="{{ route('officer.activities.booking-letter', $event) }}" class="text-xs text-[#07873e] font-semibold underline">
+                    Download the letter (PDF)
+                </a>
+                @if($event->approval_status === 'rejected')
+                    <a href="{{ route('officer.activities.edit', $event) }}" class="text-xs text-[#07873e] font-semibold underline">
+                        Edit and send again
+                    </a>
+                @endif
+            </div>
+        @elseif($event->approval_status === 'rejected' && $event->review_remarks)
+            {{-- Sent before the VPA step: decided by the adviser alone. --}}
             <p class="text-xs text-red-500">Remarks: {{ $event->review_remarks }}</p>
         @endif
+
         @if($event->approval_letter_path)
-            <a href="{{ route('officer.activities.letter', $event) }}" class="text-xs text-[#07873e] font-semibold underline">
-                View uploaded approval letter
+            <a href="{{ route('officer.activities.letter', $event) }}" class="text-xs text-[#07873e] font-semibold underline block">
+                View uploaded supporting document
             </a>
         @endif
     </div>

@@ -17,6 +17,7 @@ use Illuminate\Notifications\Notifiable;
     'pending_club_assignment', 'enrollment_status',
     'firebase_uid', 'role', 'college_id', 'profile_photo_url',
     'last_password_changed', 'is_suspended', 'chat_privacy_acknowledged_at',
+    'signature_path',
 ])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable
@@ -52,10 +53,20 @@ class User extends Authenticatable
     {
         return match ($this->role) {
             'dsa'                           => 'Student Affairs Office',
+            'vpa'                           => 'Office of the VP for Administration',
             'adviser'                       => 'Club Adviser',
             'president', 'treasurer', 'mmo' => 'Club Officer',
             default                         => 'Student',
         };
+    }
+
+    /**
+     * Whether this user signs room booking letters (POLICY.md §Event Creation): club
+     * officers when they send one, the VPA and club advisers when they approve one.
+     */
+    public function signsLetters(): bool
+    {
+        return in_array($this->role, ['president', 'treasurer', 'mmo', 'adviser', 'vpa'], true);
     }
 
     /**

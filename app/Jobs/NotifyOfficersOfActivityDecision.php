@@ -11,9 +11,17 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 
+/**
+ * Tell a club's officers and adviser what became of an activity sent for approval: the
+ * VPA's decision on its room booking letter, then the adviser's (POLICY.md §Event
+ * Creation). A VPA approval is news, not the end — it is now with the adviser.
+ */
 class NotifyOfficersOfActivityDecision implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public const VPA_APPROVED = 'vpa_approved';
+    public const VPA_REJECTED = 'vpa_rejected';
 
     public function __construct(private int $activityId, private string $decision) {}
 
@@ -33,11 +41,26 @@ class NotifyOfficersOfActivityDecision implements ShouldQueue
             $recipientIds->push($club->adviser_id);
         }
 
-        $title = $this->decision === 'approved' ? 'Activity approved' : 'Activity rejected';
+        $remarks = $activity->review_remarks ? ' Remarks: ' . $activity->review_remarks : '';
 
-        $body = $this->decision === 'approved'
-            ? "\"{$activity->title}\" was approved by the club adviser."
-            : "\"{$activity->title}\" was rejected by the club adviser." . ($activity->review_remarks ? ' Remarks: ' . $activity->review_remarks : '');
+        [$title, $body] = match ($this->decision) {
+            self::VPA_APPROVED => [
+                'Letter approved by the VPA',
+                "The Vice President for Administration approved the room booking letter for \"{$activity->title}\". It is now with the club adviser for confirmation.",
+            ],
+            self::VPA_REJECTED => [
+                'Letter returned by the VPA',
+                "The Vice President for Administration did not approve the room booking letter for \"{$activity->title}\".{$remarks} Edit the activity to send it again.",
+            ],
+            'approved' => [
+                'Activity approved',
+                "\"{$activity->title}\" was approved by the club adviser.",
+            ],
+            default => [
+                'Activity rejected',
+                "\"{$activity->title}\" was rejected by the club adviser.{$remarks}",
+            ],
+        };
 
         foreach ($recipientIds->unique() as $recipientId) {
             ClubNotification::create([
@@ -46,7 +69,9 @@ class NotifyOfficersOfActivityDecision implements ShouldQueue
                 'club_id'      => $club->id,
                 'title'        => $title,
                 'body'         => $body,
-                'action_url'   => route('officer.activities.show', $activity),
+                'action_url'   => (int) $recipientId === (int) $club->adviser_id
+                    ? route('adviser.activities.show', $activity)
+                    : route('officer.activities.show', $activity),
             ]);
         }
     }

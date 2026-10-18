@@ -80,7 +80,7 @@ class DetectClubViolationsJob implements ShouldQueue
     private function checkOverdueActivityRequest(Club $club): void
     {
         $overdue = ClubActivity::where('club_id', $club->id)
-            ->where('approval_status', 'pending_approval')
+            ->whereIn('approval_status', ClubActivity::AWAITING_APPROVAL_STATUSES)
             ->where('created_at', '<=', now()->subDays(5))
             ->get();
 

@@ -18,15 +18,30 @@
 
     {{-- Validation errors --}}
 
-    @if($event->approval_status === 'approved')
+    @if(in_array($event->approval_status, ['approved', 'pending_approval'], true))
         <div class="mb-4 bg-[#F9A825]/10 border border-[#F9A825]/40 rounded-xl px-4 py-3">
             <p class="text-sm text-gray-700 font-medium">
-                This activity is already DSA-approved. Editing it (other than switching to Internal Meeting) will reset it to Pending Approval and notify the DSA again.
+                {{ $event->approval_status === 'approved' ? 'This activity is already approved.' : 'The VPA has already approved this letter.' }}
+                Saving a change (other than switching to Internal Meeting) signs the letter again and sends it back to the Vice President for Administration, so it needs their approval and the adviser's again.
             </p>
+        </div>
+    @elseif($event->approval_status === 'rejected')
+        <div class="mb-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+            <p class="text-sm text-red-700 font-medium">
+                {{ $event->wasRejectedByVpa() ? 'The Vice President for Administration returned this letter.' : 'The club adviser did not approve this activity.' }}
+                Make the changes asked for, then save to sign the letter and send it to the VPA again.
+            </p>
+            @if($event->review_remarks)
+                <p class="text-xs text-red-600 mt-1">Remarks: {{ $event->review_remarks }}</p>
+            @endif
+        </div>
+    @elseif($event->isAwaitingVpa())
+        <div class="mb-4 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+            <p class="text-sm text-gray-700">The letter is with the Vice President for Administration. Changes you save replace the letter they see, signed again by you.</p>
         </div>
     @endif
 
-    <form method="POST" action="{{ route('officer.activities.update', $event) }}" enctype="multipart/form-data" class="space-y-4"
+    <form method="POST" action="{{ route('officer.activities.update', $event) }}" enctype="multipart/form-data" class="space-y-4" id="event-form"
           data-loading="dialog" data-loading-message="Saving changes"
           x-data="{ activityType: '{{ old('activity_type', $event->activity_type) }}' }">
         @csrf
@@ -196,15 +211,21 @@
             @enderror
         </div>
 
-        {{-- Approval letter --}}
+        {{-- Room booking letter to the VPA (everything but internal meetings) --}}
+        @include('officer.activities._booking-letter-field', [
+            'letterBody' => old('letter_body', $event->letter_body ?? ''),
+            'aiDrafted'  => old('letter_ai_drafted', $event->letter_ai_drafted ? '1' : '0'),
+        ])
+
+        {{-- Supporting document --}}
         <div x-show="activityType !== 'internal_meeting'" x-cloak>
             <label class="block text-sm font-medium text-gray-700 mb-1.5">
-                Approval Letter
+                Other Supporting Document
                 <span class="text-xs text-gray-400 font-normal ml-1">(Optional, PDF/JPG/PNG, max 5MB)</span>
             </label>
             @if($event->approval_letter_path)
                 <a href="{{ route('officer.activities.letter', $event) }}" class="text-xs text-[#07873e] font-semibold underline block mb-2">
-                    View current uploaded letter
+                    View current uploaded document
                 </a>
             @endif
             <input type="file" name="approval_letter" accept=".pdf,.jpg,.jpeg,.png"

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Club;
 use App\Models\ClubActivity;
 use App\Models\Semester;
+use App\Services\BookingLetter;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\View\View;
@@ -13,10 +14,11 @@ use Illuminate\View\View;
 /**
  * DSA oversight of club activities: read-only.
  *
- * Approving an activity belongs to the club adviser (POLICY.md §Event Creation).
- * The DSA watches every club from here and reports on them, but does not decide —
- * the one exception being a club with no adviser, where the submission notification
- * comes here instead so nothing waits on nobody.
+ * Approving an activity belongs to the Vice President for Administration, then the
+ * club adviser (POLICY.md §Event Creation). The DSA watches every club from here and
+ * reports on them, but does not decide — the exception being a club with no adviser,
+ * or no VPA account, where the notification comes here instead so nothing waits on
+ * nobody.
  */
 class ActivityController extends Controller
 {
@@ -60,11 +62,23 @@ class ActivityController extends Controller
         return view('dsa.activities.monitor', compact('activities', 'clubs', 'semesters'));
     }
 
-    public function show(ClubActivity $event): View
+    public function show(ClubActivity $event, BookingLetter $letters): View
     {
-        $event->load('club', 'creator', 'approvedBy', 'changeLogs.changedBy');
+        $event->load('club', 'creator', 'approvedBy', 'vpaReviewer', 'changeLogs.changedBy');
 
-        return view('dsa.activities.show', compact('event'));
+        $letter = $event->hasBookingLetter() ? $letters->compose($event) : null;
+
+        return view('dsa.activities.show', compact('event', 'letter'));
+    }
+
+    /** The activity's room booking letter as a PDF, with every signature given so far. */
+    public function bookingLetter(ClubActivity $event, BookingLetter $letters)
+    {
+        if (! $event->hasBookingLetter()) {
+            abort(404);
+        }
+
+        return $letters->pdf($event)->download($letters->filename($event));
     }
 
     public function downloadLetter(ClubActivity $event)

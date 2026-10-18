@@ -148,6 +148,7 @@
                 $activity = $item['activity'];
                 $state = match (true) {
                     $activity->status === 'completed'                 => ['Held', 'bg-green-50 text-green-700 border-green-200'],
+                    $activity->approval_status === 'pending_vpa'      => ['Awaiting VPA', 'bg-amber-50 text-amber-700 border-amber-200'],
                     $activity->approval_status === 'pending_approval' => ['Awaiting adviser', 'bg-amber-50 text-amber-700 border-amber-200'],
                     $activity->approval_status === 'rejected'         => ['Rejected', 'bg-red-50 text-red-700 border-red-200'],
                     $activity->status === 'cancelled'                 => ['Cancelled', 'bg-gray-50 text-gray-500 border-gray-200'],

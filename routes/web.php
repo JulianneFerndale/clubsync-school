@@ -113,6 +113,12 @@ Route::middleware('firebase.token')->group(function () {
     Route::post('/profile/photo',   [ProfileController::class, 'updatePhoto'])->name('profile.photo');
     Route::delete('/profile/photo', [ProfileController::class, 'deletePhoto'])->name('profile.photo.delete');
 
+    // The signature room booking letters are signed with (officers, advisers, the VPA).
+    Route::get('/profile/signature',    [ProfileController::class, 'showSignature'])->name('profile.signature.show');
+    Route::post('/profile/signature',   [ProfileController::class, 'updateSignature'])
+        ->middleware('throttle:10,1,signature-upload')->name('profile.signature');
+    Route::delete('/profile/signature', [ProfileController::class, 'deleteSignature'])->name('profile.signature.delete');
+
     // Throttled: verifies the current password against Firebase, so it's brute-forceable.
     Route::post('/profile/password', [PasswordController::class, 'update'])
         ->middleware('throttle:5,1,password-change')->name('profile.password.update');
@@ -234,6 +240,7 @@ Route::middleware(['firebase.token', 'role:dsa'])->prefix('dsa')->name('dsa.')->
     Route::get('/activities/monitor',                [\App\Http\Controllers\DSA\ActivityController::class, 'monitor'])->name('activities.monitor');
     Route::get('/activities/{event}',                [\App\Http\Controllers\DSA\ActivityController::class, 'show'])->name('activities.show');
     Route::get('/activities/{event}/letter',         [\App\Http\Controllers\DSA\ActivityController::class, 'downloadLetter'])->name('activities.letter');
+    Route::get('/activities/{event}/booking-letter', [\App\Http\Controllers\DSA\ActivityController::class, 'bookingLetter'])->name('activities.booking-letter');
 
     // Semester-end club reports (submitted by club presidents)
     Route::get('/club-reports',                          [\App\Http\Controllers\DSA\ClubReportController::class, 'index'])->name('club-reports.index');
@@ -311,6 +318,7 @@ Route::middleware(['firebase.token', 'role:adviser'])->prefix('adviser')->name('
     Route::post('/activities/{event}/approve',         [\App\Http\Controllers\Adviser\ActivityController::class, 'approve'])->name('activities.approve');
     Route::post('/activities/{event}/reject',          [\App\Http\Controllers\Adviser\ActivityController::class, 'reject'])->name('activities.reject');
     Route::get('/activities/{event}/letter',           [\App\Http\Controllers\Adviser\ActivityController::class, 'downloadLetter'])->name('activities.letter');
+    Route::get('/activities/{event}/booking-letter',   [\App\Http\Controllers\Adviser\ActivityController::class, 'bookingLetter'])->name('activities.booking-letter');
 
     // AI club narrative review queue
     Route::get('/narratives',                        [\App\Http\Controllers\Adviser\NarrativeController::class, 'index'])->name('narratives.index');
@@ -333,6 +341,19 @@ Route::middleware(['firebase.token', 'role:adviser'])->prefix('adviser')->name('
     Route::get('/semester-reports/{report}/documents/{document}/{format}', [\App\Http\Controllers\Adviser\SemesterReportController::class, 'document'])->name('semester-reports.document');
 });
 
+// ─── Vice President for Administration (run by the VPA or the SSG) ──────────
+// Room booking letters: every activity that needs approval comes here first, then
+// goes to the club adviser (POLICY.md §Event Creation).
+Route::middleware(['firebase.token', 'role:vpa'])->prefix('vpa')->name('vpa.')->group(function () {
+    Route::get('/dashboard', [\App\Http\Controllers\VPA\DashboardController::class, 'index'])->name('dashboard');
+
+    Route::get('/letters',                  [\App\Http\Controllers\VPA\LetterController::class, 'index'])->name('letters.index');
+    Route::get('/letters/{event}',          [\App\Http\Controllers\VPA\LetterController::class, 'show'])->name('letters.show');
+    Route::post('/letters/{event}/approve', [\App\Http\Controllers\VPA\LetterController::class, 'approve'])->name('letters.approve');
+    Route::post('/letters/{event}/reject',  [\App\Http\Controllers\VPA\LetterController::class, 'reject'])->name('letters.reject');
+    Route::get('/letters/{event}/pdf',      [\App\Http\Controllers\VPA\LetterController::class, 'pdf'])->name('letters.pdf');
+});
+
 // ─── Officer (president / treasurer / mmo) ───────────────────────────────────
 Route::middleware(['firebase.token', 'role:officer'])->prefix('officer')->name('officer.')->group(function () {
     Route::get('/dashboard', [\App\Http\Controllers\Officer\DashboardController::class, 'index'])->name('dashboard');
@@ -349,11 +370,15 @@ Route::middleware(['firebase.token', 'role:officer'])->prefix('officer')->name('
     // Throttled: each call can reach the Gemini API, so a stuck client must not burn quota.
     Route::post('/activities/ai-proposal', [\App\Http\Controllers\Officer\ActivityController::class, 'aiProposal'])
         ->middleware('throttle:20,1,ai-proposal')->name('activities.ai-proposal');
+    // The room booking letter's body for the officer to read before sending (AI, or the template).
+    Route::post('/activities/letter-draft', [\App\Http\Controllers\Officer\ActivityController::class, 'letterDraft'])
+        ->middleware('throttle:20,1,letter-draft')->name('activities.letter-draft');
     Route::get('/activities/{event}',      [\App\Http\Controllers\Officer\ActivityController::class, 'show'])->name('activities.show');
     Route::get('/activities/{event}/edit', [\App\Http\Controllers\Officer\ActivityController::class, 'edit'])->name('activities.edit');
     Route::patch('/activities/{event}',    [\App\Http\Controllers\Officer\ActivityController::class, 'update'])->name('activities.update');
     Route::post('/activities/{event}/complete', [\App\Http\Controllers\Officer\ActivityController::class, 'complete'])->name('activities.complete');
     Route::get('/activities/{event}/letter', [\App\Http\Controllers\Officer\ActivityController::class, 'downloadLetter'])->name('activities.letter');
+    Route::get('/activities/{event}/booking-letter', [\App\Http\Controllers\Officer\ActivityController::class, 'bookingLetter'])->name('activities.booking-letter');
 
     // Photos, receipts, properties and budget for the semester-end report documents
     Route::post('/activities/{event}/photos',            [\App\Http\Controllers\Officer\ActivityReportController::class, 'storePhoto'])->name('activities.photos.store');

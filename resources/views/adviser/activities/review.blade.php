@@ -54,6 +54,26 @@
             @endif
         </div>
 
+        {{-- Still with the VPA: not the adviser's to decide yet --}}
+        @if($withVpa->isNotEmpty())
+            <div>
+                <p class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2 px-1">With the VPA</p>
+                <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden divide-y divide-gray-50">
+                    @foreach($withVpa as $event)
+                        <a href="{{ route('adviser.activities.show', $event) }}"
+                           class="flex items-center justify-between gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
+                            <div class="flex-1 min-w-0">
+                                <p class="text-sm font-medium text-gray-700 truncate">{{ $event->title }}</p>
+                                <p class="text-xs text-gray-400 mt-0.5">{{ $event->date->format('M j, Y') }} · {{ $event->venue }}</p>
+                            </div>
+                            <x-status-badge :status="$event->approval_status" />
+                        </a>
+                    @endforeach
+                </div>
+                <p class="text-[11px] text-gray-400 mt-1.5 px-1">They reach Pending Review once the Vice President for Administration approves the room booking letter.</p>
+            </div>
+        @endif
+
         {{-- Already decided --}}
         <div>
             <p class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2 px-1">Recently Reviewed</p>

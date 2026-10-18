@@ -34,6 +34,7 @@ if (! function_exists('role_layout')) {
     {
         return match ($role) {
             'dsa'                            => 'layouts.app-dsa',
+            'vpa'                            => 'layouts.app-vpa',
             'adviser'                        => 'layouts.app-adviser',
             'officer', 'president',
             'treasurer', 'mmo'               => 'layouts.app-officer',

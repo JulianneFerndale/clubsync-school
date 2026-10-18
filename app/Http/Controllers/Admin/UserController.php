@@ -11,7 +11,7 @@ use Illuminate\View\View;
 
 class UserController extends Controller
 {
-    private const ROLES = ['dsa', 'adviser', 'president', 'treasurer', 'mmo', 'member'];
+    private const ROLES = ['dsa', 'vpa', 'adviser', 'president', 'treasurer', 'mmo', 'member'];
 
     public function index(Request $request): View
     {
