@@ -57,18 +57,22 @@ const signedInUserId = () => parseInt(metaContent('cs-user-id'), 10) || 0;
 let liveUserId = 0;
 
 // ── When the live connection cannot be reached ──────────────────────────────
-// Not every deployment runs Reverb (the Render image has none, and a local run without
-// `composer run dev` has none either). Rather than going quiet, the page polls the
-// counts while its socket is down and toasts what arrived, so a notification still
-// reaches the person within half a minute. Polling stops once the socket connects.
-const POLL_MS = 30000;
+// Not every deployment runs Reverb (Laravel Cloud and the Render image have none, and a
+// local run without `composer run dev` has none either). Rather than going quiet, the
+// page polls the counts while its socket is down and toasts what arrived, so a
+// notification still reaches the person within about ten seconds. A hidden tab skips
+// its turn — coming back after more than ten seconds re-checks at once (see
+// visibilitychange below) — so background tabs cost nothing. Polling stops once the socket connects.
+const POLL_MS = 10000;
 let pollTimer = null;
 let lastNotificationId = null; // newest one already on screen; null until first read
 
 function startPolling() {
     if (pollTimer || !liveUserId) return;
     resync(); // sets the baseline, so what was already there is not toasted
-    pollTimer = setInterval(resync, POLL_MS);
+    pollTimer = setInterval(() => {
+        if (document.visibilityState === 'visible') resync();
+    }, POLL_MS);
 }
 
 function stopPolling() {
