@@ -131,7 +131,7 @@ class ActivityController extends Controller
      * The date rule only reaches as far as midnight: "today" still satisfies it at
      * 4 PM for an activity that started at 8 AM. An officer cannot mean to schedule
      * one into the past — nobody can attend it, no reminder can fire for it, and the
-     * DSA would be asked to approve something that has already happened.
+     * VPA would be asked to approve a room booking that has already gone by.
      *
      * Creation only. POLICY.md: "Officers may edit any activity at any time", which
      * includes activities that have already taken place, so update() does not run it.
@@ -319,15 +319,13 @@ class ActivityController extends Controller
             }
         }
 
-        // Internal meetings are scheduled outright. Everything else is sent to the VPA with
-        // a room booking letter, then to the club adviser (POLICY.md §Event Creation).
-        $needsApproval = $validated['activity_type'] !== 'internal_meeting';
-
+        // Every new activity, internal meetings included, is sent to the VPA with a room
+        // booking letter, then to the club adviser (POLICY.md §Event Creation).
         // The officer read this letter on the form (the AI's draft or their own words)
         // before pressing Send; with none written, it is the template, which no AI wrote.
         $letterBody = trim((string) ($validated['letter_body'] ?? ''));
 
-        if ($needsApproval && $letterBody !== '' && ($error = $this->letterVenueError($letterBody, $validated['venue']))) {
+        if ($letterBody !== '' && ($error = $this->letterVenueError($letterBody, $validated['venue']))) {
             return back()->withInput()->withErrors($error);
         }
 
@@ -350,27 +348,22 @@ class ActivityController extends Controller
             'expected_participants' => $validated['expected_participants'],
             'activity_type'         => $validated['activity_type'],
             'target_year_levels'    => $this->normalizeYearLevels($request),
-            'approval_status'       => $needsApproval ? 'pending_vpa' : 'no_approval_needed',
+            'approval_status'       => 'pending_vpa',
             'approval_letter_path'  => $approvalLetterPath,
             'status'                => 'scheduled',
             'created_by'            => auth_user_id(),
-            'letter_body'           => $needsApproval ? ($letterBody !== '' ? $letterBody : BookingLetter::templateBody($club->name, $validated)) : null,
-            'letter_ai_drafted'     => $needsApproval && $letterBody !== '' && $request->boolean('letter_ai_drafted'),
+            'letter_body'           => $letterBody !== '' ? $letterBody : BookingLetter::templateBody($club->name, $validated),
+            'letter_ai_drafted'     => $letterBody !== '' && $request->boolean('letter_ai_drafted'),
             // The officer's signature goes on as they send it.
-            'letter_signatures'     => $needsApproval && $officer
+            'letter_signatures'     => $officer
                 ? ['officer' => $this->letters->sign($officer, BookingLetter::officerPosition($club, $officer))]
                 : null,
         ]);
 
-        if ($needsApproval) {
-            AuditLog::record('activity.letter.sent', $event, ['club_id' => $club->id, 'venue' => $event->venue, 'ai_drafted' => $event->letter_ai_drafted]);
+        AuditLog::record('activity.letter.sent', $event, ['club_id' => $club->id, 'venue' => $event->venue, 'ai_drafted' => $event->letter_ai_drafted]);
 
-            NotifyVpaOfBookingLetter::dispatch($event->id);
-        } else {
-            // Already confirmed, so members can be told straight away. Activities
-            // awaiting the adviser's sign-off announce themselves on approval instead.
-            NotifyMembersOfActivity::dispatch($event->id, NotifyMembersOfActivity::SCHEDULED, auth_user_id());
-        }
+        // Members hear of it, and it reaches their calendars, once the adviser approves.
+        NotifyVpaOfBookingLetter::dispatch($event->id);
 
         // Mirror to Firebase RTDB (eventual consistency — do not roll back on failure)
         // TODO: remove SQLite guard / revisit Firebase node naming before Supabase migration
@@ -387,16 +380,8 @@ class ActivityController extends Controller
             Log::warning('Firebase activity mirror failed for activity #' . $event->id . ': ' . $e->getMessage());
         }
 
-        // Confirmed activities (internal meetings) go onto members' Google Calendars in the background.
-        SyncToGoogleCalendars::dispatch(GoogleCalendarEvent::ACTIVITY, $event->id);
-
-        if ($needsApproval) {
-            return redirect()->route('officer.activities.show', $event)
-                ->with('success', 'Activity saved. Your room booking letter was signed and sent to the Vice President for Administration.');
-        }
-
-        return redirect()->route('officer.activities.index')
-            ->with('success', 'Activity successfully scheduled!');
+        return redirect()->route('officer.activities.show', $event)
+            ->with('success', 'Activity saved. Your room booking letter was signed and sent to the Vice President for Administration.');
     }
 
     /**
@@ -699,16 +684,16 @@ class ActivityController extends Controller
             },
         ));
 
-        $needsApproval = $validated['activity_type'] !== 'internal_meeting';
-        $letterEdited  = $needsApproval && $letterBody !== '' && $letterBody !== (string) $event->letter_body;
-        $changed       = $edited || $letterEdited || $request->hasFile('approval_letter')
+        $letterEdited = $letterBody !== '' && $letterBody !== (string) $event->letter_body;
+        $changed      = $edited || $letterEdited || $request->hasFile('approval_letter')
             || $validated['target_year_levels'] != ($event->target_year_levels ?: null);
 
-        // POLICY.md §Event Creation: a changed activity that needs approval goes back to
-        // the VPA with a re-signed letter, whatever stage it had reached: approved, with
-        // the adviser, or returned (which is how a returned letter is sent again). So does
-        // an internal meeting turned into an activity that needs approval.
-        $resubmit = $needsApproval && ($event->approval_status === 'no_approval_needed' || $changed);
+        // POLICY.md §Event Creation: a changed activity goes back to the VPA with a
+        // re-signed letter, whatever stage it had reached — approved, with the adviser, or
+        // returned (which is how a returned letter is sent again). So does an internal
+        // meeting scheduled before every activity needed approval. Saved unchanged, it
+        // keeps the approvals it has.
+        $resubmit = $changed;
 
         if ($resubmit) {
             $material = array_intersect(['title', 'date', 'time_start', 'time_end', 'venue'], $edited);
@@ -736,9 +721,7 @@ class ActivityController extends Controller
 
         $wasWithVpa = $event->approval_status === 'pending_vpa';
 
-        if (! $needsApproval) {
-            $validated['approval_status'] = 'no_approval_needed';
-        } elseif ($resubmit) {
+        if ($resubmit) {
             $officer = User::find(auth_user_id());
 
             $validated += [

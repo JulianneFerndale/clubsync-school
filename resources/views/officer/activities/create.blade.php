@@ -28,7 +28,7 @@
     @endif
 
     <form method="POST" action="{{ route('officer.activities.store') }}" enctype="multipart/form-data" class="space-y-4" id="event-form"
-          data-loading="dialog" data-loading-message="Adding event"
+          data-loading="dialog" data-loading-message="Sending to the VPA"
           x-data="{ activityType: '{{ old('activity_type', 'internal_meeting') }}' }">
         @csrf
 
@@ -234,19 +234,16 @@
             @error('activity_type')
                 <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
             @enderror
-            <p class="text-xs text-gray-400 mt-1.5" x-show="activityType === 'internal_meeting'">
-                Internal meetings are scheduled immediately — no approval or letter required.
-            </p>
-            <p class="text-xs text-[#F9A825] mt-1.5 font-medium" x-show="activityType !== 'internal_meeting'">
-                This activity needs a room booking letter. It goes to the Vice President for Administration first, then to your club adviser, and is confirmed once both approve.
+            <p class="text-xs text-[#F9A825] mt-1.5 font-medium">
+                Every activity, internal meetings included, needs a room booking letter. It goes to the Vice President for Administration first, then to your club adviser, and is confirmed once both approve.
             </p>
         </div>
 
-        {{-- Room booking letter to the VPA (everything but internal meetings) --}}
+        {{-- Room booking letter to the VPA (every activity) --}}
         @include('officer.activities._booking-letter-field', ['letterBody' => old('letter_body', ''), 'aiDrafted' => old('letter_ai_drafted', '0')])
 
-        {{-- Supporting document (external / ACLE / community / campus resource activities only) --}}
-        <div x-show="activityType !== 'internal_meeting'" x-cloak>
+        {{-- Supporting document --}}
+        <div>
             <label class="block text-sm font-medium text-gray-700 mb-1.5">
                 Other Supporting Document
                 <span class="text-xs text-gray-400 font-normal ml-1">(Optional, PDF/JPG/PNG, max 5MB)</span>
@@ -290,9 +287,8 @@
                 Cancel
             </a>
             <button type="submit"
-                    class="bg-[#07873e] text-[#F9A825] font-semibold text-sm rounded-xl py-3.5 hover:opacity-90 transition-opacity"
-                    x-text="activityType === 'internal_meeting' ? 'Post Activity' : 'Sign & Send to VPA'">
-                Post Activity
+                    class="bg-[#07873e] text-[#F9A825] font-semibold text-sm rounded-xl py-3.5 hover:opacity-90 transition-opacity">
+                Sign &amp; Send to VPA
             </button>
         </div>
 

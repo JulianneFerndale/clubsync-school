@@ -203,6 +203,33 @@ function gcBooking(Club $club, User $creator, array $overrides = []): ClubActivi
     ]);
 }
 
+/** The VPA's account, which approves every activity's room booking letter first. */
+function gcVpa(): User
+{
+    return User::where('role', 'vpa')->first() ?? gcUser('vpa');
+}
+
+/** Take an activity through both approvals — the VPA's, then the adviser's. */
+function gcApprove(ClubActivity $activity, User $adviser): ClubActivity
+{
+    test()->withSession(gcSession(gcVpa()))->post(route('vpa.letters.approve', $activity));
+    test()->withSession(gcSession($adviser))->post(route('adviser.activities.approve', $activity));
+    test()->flushSession();
+
+    return $activity->fresh();
+}
+
+/** Add an activity as $officer and have it approved, so it is confirmed. */
+function gcConfirmed(User $officer, User $adviser, array $overrides = []): ClubActivity
+{
+    test()->withSession(gcSession($officer))
+        ->post(route('officer.activities.store'), gcActivityPayload($overrides))
+        ->assertSessionHasNoErrors();
+    test()->flushSession();
+
+    return gcApprove(ClubActivity::latest('id')->firstOrFail(), $adviser);
+}
+
 // ── Activities ───────────────────────────────────────────────────────────────
 
 it('puts a confirmed activity on the calendars of the club\'s active members, officers and adviser only', function () {
@@ -215,9 +242,15 @@ it('puts a confirmed activity on the calendars of the club\'s active members, of
     $outsider = gcMember($otherClub);
     $dsa      = gcUser('dsa');
 
+    // Every activity, this internal meeting included, waits for the VPA and the adviser.
     $this->withSession(gcSession($officer))
         ->post(route('officer.activities.store'), gcActivityPayload())
         ->assertSessionHasNoErrors();
+    $this->flushSession();
+
+    expect($google->eventsOf($member))->toBeEmpty();
+
+    gcApprove(ClubActivity::firstOrFail(), $adviser);
 
     foreach ([$member, $officer, $adviser] as $user) {
         expect($google->eventsOf($user))->toHaveCount(1);
@@ -250,7 +283,7 @@ it('keeps an approval-requiring activity off calendars until the adviser approve
     expect($google->eventsOf($member))->toBeEmpty();
 
     // The VPA approves the room booking letter first; that alone confirms nothing.
-    $this->withSession(gcSession(gcUser('vpa')))->post(route('vpa.letters.approve', $activity));
+    $this->withSession(gcSession(gcVpa()))->post(route('vpa.letters.approve', $activity));
     expect($activity->fresh()->approval_status)->toBe('pending_approval')
         ->and($google->eventsOf($member))->toBeEmpty();
 
@@ -262,49 +295,66 @@ it('keeps an approval-requiring activity off calendars until the adviser approve
         ->and(GoogleCalendarEvent::count())->toBe(0);
 });
 
-it('updates the existing copy when an activity is edited, instead of adding a second one', function () {
+it('takes an edited activity off calendars until it is approved again, then holds one copy, not two', function () {
     $google = gcFake();
-    [$club, $officer] = gcClub();
+    [$club, $officer, $adviser] = gcClub();
     $member = gcMember($club);
 
-    $this->withSession(gcSession($officer))->post(route('officer.activities.store'), gcActivityPayload());
-    $activity = ClubActivity::firstOrFail();
+    $activity = gcConfirmed($officer, $adviser);
+    expect($google->eventsOf($member))->toHaveCount(1);
 
     $this->withSession(gcSession($officer))
-        ->patch(route('officer.activities.update', $activity), gcActivityPayload(['venue' => 'Library']))
+        ->patch(route('officer.activities.update', $activity), gcActivityPayload([
+            'venue'       => 'Library',
+            'letter_body' => 'We will hold the General Assembly in the Library instead, and keep it clean.',
+        ]))
         ->assertSessionHasNoErrors();
+    $this->flushSession();
+
+    // Back with the VPA: not confirmed, so off the member's calendar for now.
+    expect($google->eventsOf($member))->toBeEmpty();
+
+    gcApprove($activity, $adviser);
 
     expect($google->eventsOf($member))->toHaveCount(1)
-        ->and($google->eventsOf($member)[0]['location'])->toBe('Library');
+        ->and($google->eventsOf($member)[0]['location'])->toBe('Library')
+        ->and(GoogleCalendarEvent::where('user_id', $member->id)->count())->toBe(1);
 });
 
-it('makes no Google API call when an edit leaves the calendar copy unchanged', function () {
+it('makes no Google API call when an activity is saved unchanged', function () {
     $google = gcFake();
-    [$club, $officer] = gcClub();
+    [$club, $officer, $adviser] = gcClub();
     gcMember($club);
 
-    $this->withSession(gcSession($officer))->post(route('officer.activities.store'), gcActivityPayload());
-    $activity = ClubActivity::firstOrFail();
-    $callsAfterCreate = count($google->calls);
+    $activity = gcConfirmed($officer, $adviser);
+    $callsAfterApproval = count($google->calls);
 
     $this->withSession(gcSession($officer))
-        ->patch(route('officer.activities.update', $activity), gcActivityPayload(['expected_participants' => 120]));
+        ->patch(route('officer.activities.update', $activity), gcActivityPayload(['letter_body' => $activity->letter_body]))
+        ->assertSessionHasNoErrors();
 
-    expect($google->calls)->toHaveCount($callsAfterCreate);
+    expect($activity->fresh()->approval_status)->toBe('approved')
+        ->and($google->calls)->toHaveCount($callsAfterApproval);
 });
 
 it('recreates the copy if the user deleted it in Google and the activity changes', function () {
     $google = gcFake();
-    [$club, $officer] = gcClub();
+    [$club, $officer, $adviser] = gcClub();
     $member = gcMember($club);
 
-    $this->withSession(gcSession($officer))->post(route('officer.activities.store'), gcActivityPayload());
-    $activity = ClubActivity::firstOrFail();
+    $activity = gcConfirmed($officer, $adviser);
 
     $google->calendars[$member->email] = []; // the member deleted it from Google Calendar
 
     $this->withSession(gcSession($officer))
-        ->patch(route('officer.activities.update', $activity), gcActivityPayload(['title' => 'Rescheduled Assembly']));
+        ->patch(route('officer.activities.update', $activity), gcActivityPayload([
+            'title'       => 'Rescheduled Assembly',
+            'letter_body' => 'The club will hold its Rescheduled Assembly at the AVR, and keep the room clean.',
+        ]))
+        ->assertSessionHasNoErrors();
+    $this->flushSession();
+
+    gcApprove($activity, $adviser);
 
     expect($google->eventsOf($member))->toHaveCount(1)
         ->and($google->eventsOf($member)[0]['summary'])->toStartWith('Rescheduled Assembly')
@@ -313,19 +363,24 @@ it('recreates the copy if the user deleted it in Google and the activity changes
 
 it('follows the activity\'s target year levels, including when an edit retargets it', function () {
     $google = gcFake();
-    [$club, $officer] = gcClub();
+    [$club, $officer, $adviser] = gcClub();
     $firstYear  = gcMember($club, 'active', ['year_level' => 1]);
     $fourthYear = gcMember($club, 'active', ['year_level' => 4]);
 
-    $this->withSession(gcSession($officer))
-        ->post(route('officer.activities.store'), gcActivityPayload(['target_year_levels' => [1, 4]]));
-    $activity = ClubActivity::firstOrFail();
+    $activity = gcConfirmed($officer, $adviser, ['target_year_levels' => [1, 4]]);
 
     expect($google->eventsOf($firstYear))->toHaveCount(1)
         ->and($google->eventsOf($fourthYear))->toHaveCount(1);
 
     $this->withSession(gcSession($officer))
-        ->patch(route('officer.activities.update', $activity), gcActivityPayload(['target_year_levels' => [1]]));
+        ->patch(route('officer.activities.update', $activity), gcActivityPayload([
+            'target_year_levels' => [1],
+            'letter_body'        => $activity->letter_body,
+        ]))
+        ->assertSessionHasNoErrors();
+    $this->flushSession();
+
+    gcApprove($activity, $adviser);
 
     expect($google->eventsOf($firstYear))->toHaveCount(1)
         ->and($google->eventsOf($fourthYear))->toBeEmpty()
@@ -362,7 +417,7 @@ it('moves a club\'s activities to the new adviser when the DSA replaces the advi
     $newAdviser = gcUser('adviser');
     $dsa        = gcUser('dsa');
 
-    $this->withSession(gcSession($officer))->post(route('officer.activities.store'), gcActivityPayload());
+    gcConfirmed($officer, $oldAdviser);
     expect($google->eventsOf($oldAdviser))->toHaveCount(1);
 
     $this->withSession(gcSession($dsa))->patch(route('dsa.clubs.update', $club), [
@@ -464,16 +519,15 @@ it('never lets one user\'s Google failure block the action or anyone else\'s cop
     Log::spy();
 
     $google = gcFake();
-    [$club, $officer] = gcClub();
+    [$club, $officer, $adviser] = gcClub();
     $healthy = gcMember($club);
     $broken  = gcMember($club);
     $google->failingFor = [$broken->email];
 
-    $this->withSession(gcSession($officer))
-        ->post(route('officer.activities.store'), gcActivityPayload())
-        ->assertRedirect(route('officer.activities.index'));
+    $activity = gcConfirmed($officer, $adviser);
 
-    expect(ClubActivity::count())->toBe(1)
+    expect($activity->approval_status)->toBe('approved')
+        ->and(ClubActivity::count())->toBe(1)
         ->and($google->eventsOf($healthy))->toHaveCount(1)
         ->and($google->callsFor($broken))->toBe(3);
 
@@ -484,12 +538,10 @@ it('does nothing, and calls nothing, while sync is switched off', function () {
     Http::fake();
     config(['google.calendar.enabled' => false]);
 
-    [$club, $officer] = gcClub();
+    [$club, $officer, $adviser] = gcClub();
     gcMember($club);
 
-    $this->withSession(gcSession($officer))
-        ->post(route('officer.activities.store'), gcActivityPayload())
-        ->assertSessionHasNoErrors();
+    gcConfirmed($officer, $adviser);
 
     Http::assertNotSent(fn (HttpRequest $request) => str_contains($request->url(), 'googleapis.com'));
     expect(GoogleCalendarEvent::count())->toBe(0);

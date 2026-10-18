@@ -22,7 +22,13 @@
         <div class="mb-4 bg-[#F9A825]/10 border border-[#F9A825]/40 rounded-xl px-4 py-3">
             <p class="text-sm text-gray-700 font-medium">
                 {{ $event->approval_status === 'approved' ? 'This activity is already approved.' : 'The VPA has already approved this letter.' }}
-                Saving a change (other than switching to Internal Meeting) signs the letter again and sends it back to the Vice President for Administration, so it needs their approval and the adviser's again.
+                Saving a change signs the letter again and sends it back to the Vice President for Administration, so it needs their approval and the adviser's again.
+            </p>
+        </div>
+    @elseif($event->approval_status === 'no_approval_needed')
+        <div class="mb-4 bg-[#F9A825]/10 border border-[#F9A825]/40 rounded-xl px-4 py-3">
+            <p class="text-sm text-gray-700 font-medium">
+                This meeting was scheduled before every activity needed approval. Saving a change sends it with a room booking letter to the Vice President for Administration, then to your adviser, and it is off members' schedules until both approve.
             </p>
         </div>
     @elseif($event->approval_status === 'rejected')
@@ -211,14 +217,14 @@
             @enderror
         </div>
 
-        {{-- Room booking letter to the VPA (everything but internal meetings) --}}
+        {{-- Room booking letter to the VPA (every activity) --}}
         @include('officer.activities._booking-letter-field', [
             'letterBody' => old('letter_body', $event->letter_body ?? ''),
             'aiDrafted'  => old('letter_ai_drafted', $event->letter_ai_drafted ? '1' : '0'),
         ])
 
         {{-- Supporting document --}}
-        <div x-show="activityType !== 'internal_meeting'" x-cloak>
+        <div>
             <label class="block text-sm font-medium text-gray-700 mb-1.5">
                 Other Supporting Document
                 <span class="text-xs text-gray-400 font-normal ml-1">(Optional, PDF/JPG/PNG, max 5MB)</span>

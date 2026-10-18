@@ -110,8 +110,9 @@ class ClubActivity extends Model
     }
 
     /**
-     * Confirmed and still going ahead: an internal meeting, or an activity the
-     * DSA approved, that has not been cancelled. Only these reach members.
+     * Confirmed and still going ahead: an activity the VPA and the adviser approved (or,
+     * from before that, an internal meeting scheduled outright) that has not been
+     * cancelled. Only these reach members.
      */
     public function isConfirmed(): bool
     {
@@ -160,15 +161,10 @@ class ClubActivity extends Model
         return $this->belongsTo(User::class, 'vpa_reviewed_by');
     }
 
-    /** Whether this activity goes through the VPA and the adviser: everything but an internal meeting. */
-    public function needsApproval(): bool
-    {
-        return ! $this->isMeeting();
-    }
-
     /**
-     * Whether this activity carries a room booking letter: everything submitted for
-     * approval since the VPA step began. Older activities went to the adviser alone.
+     * Whether this activity carries a room booking letter: every activity added since the
+     * VPA step began. Older ones went to the adviser alone, or (internal meetings) were
+     * scheduled outright.
      */
     public function hasBookingLetter(): bool
     {

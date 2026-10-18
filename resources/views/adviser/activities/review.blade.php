@@ -29,7 +29,7 @@
             @if($pending->isEmpty())
                 <div class="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-5 text-center">
                     <p class="text-sm text-gray-400">No activities pending review.</p>
-                    <p class="text-xs text-gray-400 mt-1">Internal meetings are scheduled without review.</p>
+                    <p class="text-xs text-gray-400 mt-1">Activities reach you once the Vice President for Administration approves their room booking letter.</p>
                 </div>
             @else
                 <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden divide-y divide-gray-50">

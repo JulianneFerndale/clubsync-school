@@ -194,14 +194,61 @@ it('refuses a letter that does not name the room being booked', function () {
     expect(ClubActivity::count())->toBe(0);
 });
 
-it('never sends an internal meeting to the VPA or writes it a letter', function () {
-    [$officer, , , , $vpa] = vlClub();
+it('sends an internal meeting to the VPA with a letter too', function () {
+    // Every activity an officer adds needs the VPA's approval, then the adviser's.
+    [$officer, , $adviser, $member, $vpa] = vlClub();
 
     $activity = vlSend($officer, ['activity_type' => 'internal_meeting']);
 
-    expect($activity->approval_status)->toBe('no_approval_needed')
-        ->and($activity->hasBookingLetter())->toBeFalse()
-        ->and(ClubNotification::where('recipient_id', $vpa->id)->exists())->toBeFalse();
+    expect($activity->approval_status)->toBe('pending_vpa')
+        ->and($activity->isConfirmed())->toBeFalse()
+        ->and($activity->hasBookingLetter())->toBeTrue()
+        ->and($activity->letterSignature('officer')['user_id'])->toBe($officer->id)
+        ->and(ClubNotification::where('recipient_id', $vpa->id)->exists())->toBeTrue()
+        ->and(ClubNotification::where('recipient_id', $member->id)->exists())->toBeFalse();
+
+    $activity = vlApproveAsVpa($vpa, $activity);
+    $this->withSession(vlSession($adviser))->post(route('adviser.activities.approve', $activity));
+
+    expect($activity->fresh()->isConfirmed())->toBeTrue()
+        ->and(ClubNotification::where('recipient_id', $member->id)->exists())->toBeTrue();
+});
+
+it('sends a meeting scheduled before the VPA step to the VPA once it is changed', function () {
+    [$officer, $club, , , $vpa] = vlClub();
+
+    $legacy = ClubActivity::create([
+        'club_id' => $club->id, 'title' => 'Weekly Huddle', 'description' => 'Huddle.',
+        'date' => now()->addDays(5)->toDateString(), 'time_start' => '09:00', 'time_end' => '10:00',
+        'venue' => 'PC 2-1', 'purpose' => 'Plan the week.', 'expected_participants' => 10,
+        'activity_type' => 'internal_meeting', 'approval_status' => 'no_approval_needed',
+        'status' => 'scheduled', 'created_by' => $officer->id,
+    ]);
+
+    // Saved unchanged: it keeps the status it had.
+    $this->withSession(vlSession($officer))
+        ->patch(route('officer.activities.update', $legacy), vlPayload([
+            'title' => 'Weekly Huddle', 'description' => 'Huddle.', 'date' => now()->addDays(5)->toDateString(),
+            'time_start' => '09:00', 'time_end' => '10:00', 'purpose' => 'Plan the week.',
+            'expected_participants' => 10, 'activity_type' => 'internal_meeting',
+        ]))
+        ->assertSessionHasNoErrors();
+
+    expect($legacy->fresh()->approval_status)->toBe('no_approval_needed');
+
+    $this->withSession(vlSession($officer))
+        ->patch(route('officer.activities.update', $legacy), vlPayload([
+            'title' => 'Weekly Huddle', 'description' => 'Huddle.', 'date' => now()->addDays(5)->toDateString(),
+            'time_start' => '09:00', 'time_end' => '11:00', 'purpose' => 'Plan the week.',
+            'expected_participants' => 10, 'activity_type' => 'internal_meeting',
+        ]))
+        ->assertSessionHasNoErrors();
+
+    $fresh = $legacy->fresh();
+
+    expect($fresh->approval_status)->toBe('pending_vpa')
+        ->and($fresh->letter_body)->toContain('PC 2-1')
+        ->and(ClubNotification::where('recipient_id', $vpa->id)->exists())->toBeTrue();
 });
 
 it('writes the template letter from the activity details', function () {

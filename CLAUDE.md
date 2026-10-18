@@ -49,7 +49,7 @@ php artisan db:seed --class=SeedAdmin
 
 **Roles:** `admin`, `dsa`, `vpa`, `adviser`, `president`, `treasurer`, `mmo`, `member`
 
-`vpa` is the Vice President for Administration (run by the VPA or the SSG): it approves the room booking letter every non-meeting activity is sent with, before the club adviser (`ClubActivity` `approval_status`: `pending_vpa` → `pending_approval` → `approved`). Create the account with `php artisan app:create-vpa --email=…`. The letter is composed by `App\Services\BookingLetter` (PDF via dompdf); signatures by `App\Services\SignatureStorage`.
+`vpa` is the Vice President for Administration (run by the VPA or the SSG): it approves the room booking letter every new activity (internal meetings included) is sent with, before the club adviser (`ClubActivity` `approval_status`: `pending_vpa` → `pending_approval` → `approved`). Create the account with `php artisan app:create-vpa --email=…`. The letter is composed by `App\Services\BookingLetter` (PDF via dompdf); signatures by `App\Services\SignatureStorage`.
 
 Controllers are grouped by role under `app/Http/Controllers/{Admin,DSA,VPA,Adviser,Officer,Member}/`.
 

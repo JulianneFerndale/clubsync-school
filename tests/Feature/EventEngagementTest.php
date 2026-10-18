@@ -168,13 +168,15 @@ it('P1: lets an Officer create and schedule an activity with complete details', 
     $response = $this->withSession(evSession($officer))
         ->post(route('officer.activities.store'), evPayload());
 
-    $response->assertRedirect(route('officer.activities.index'));
+    $activity = ClubActivity::where('club_id', $club->id)->first();
+
+    $response->assertRedirect(route('officer.activities.show', $activity));
     $response->assertSessionHas('success');
     $response->assertSessionHasNoErrors();
 
-    $activity = ClubActivity::where('club_id', $club->id)->first();
-
     expect($activity)->not->toBeNull()
+        // Scheduled, but confirmed only once the VPA and the adviser approve it.
+        ->and($activity->approval_status)->toBe('pending_vpa')
         ->and($activity->title)->toBe('General Assembly')
         ->and($activity->venue)->toBe('AVR')
         ->and($activity->date->toDateString())->toBe(now()->addDays(10)->toDateString())
@@ -535,6 +537,19 @@ function evAudience(): array
     return [$officer, $club, $adviser, $member];
 }
 
+/**
+ * Take an activity through both approvals — the VPA's, then the adviser's — the way
+ * every new or changed activity is confirmed (POLICY.md §Event Creation).
+ */
+function evApproveAll(ClubActivity $activity, User $adviser): ClubActivity
+{
+    test()->withSession(evSession(evVpa()))->post(route('vpa.letters.approve', $activity));
+    test()->withSession(evSession($adviser))->post(route('adviser.activities.approve', $activity));
+    test()->flushSession();
+
+    return $activity->fresh();
+}
+
 /** Recipient ids of every NotificationCreated broadcast captured by Event::fake(). */
 function evBroadcastRecipients(): array
 {
@@ -543,22 +558,29 @@ function evBroadcastRecipients(): array
         ->all();
 }
 
-it('P3: broadcasts a real-time event to club members when an activity is created', function () {
+it('P3: broadcasts a real-time event to club members when a new activity is approved', function () {
+    // POLICY: every new activity, an internal meeting included, waits for the VPA and
+    // the adviser; members hear of it the moment it is confirmed, not before.
     Event::fake([NotificationCreated::class]);
 
-    [$officer, , , $member] = evAudience();
+    [$officer, , $adviser, $member] = evAudience();
 
     $this->withSession(evSession($officer))
         ->post(route('officer.activities.store'), evPayload());
 
+    expect(evBroadcastRecipients())->not->toContain($member->id);
+
+    evApproveAll(ClubActivity::where('title', 'General Assembly')->firstOrFail(), $adviser);
+
     expect(evBroadcastRecipients())->toContain($member->id);
 });
 
-it('P3: broadcasts a real-time event to club members when an activity is updated', function () {
+it('P3: broadcasts a real-time event to club members when an updated activity is approved again', function () {
     Event::fake([NotificationCreated::class]);
 
-    [$officer, $club, , $member] = evAudience();
+    [$officer, $club, $adviser, $member] = evAudience();
 
+    // A meeting scheduled before every activity needed approval.
     $activity = evBooking($club, now()->addDays(9)->toDateString(), '09:00', '11:00', 'Moot Court', 'Original Title');
 
     $this->withSession(evSession($officer))
@@ -567,7 +589,11 @@ it('P3: broadcasts a real-time event to club members when an activity is updated
             'venue' => 'Library',
         ]));
 
-    expect($activity->fresh()->title)->toBe('Rescheduled Title');
+    expect($activity->fresh()->title)->toBe('Rescheduled Title')
+        ->and($activity->fresh()->approval_status)->toBe('pending_vpa');
+
+    evApproveAll($activity, $adviser);
+
     expect(evBroadcastRecipients())->toContain($member->id);
 });
 
@@ -676,7 +702,7 @@ it('P3: does not broadcast an immaterial edit', function () {
 it('P3: does not broadcast to inactive or pending members', function () {
     Event::fake([NotificationCreated::class]);
 
-    [$officer, $club] = evAudience();
+    [$officer, $club, $adviser, $member] = evAudience();
 
     $pending = evUser('member');
     ClubMember::create([
@@ -687,13 +713,16 @@ it('P3: does not broadcast to inactive or pending members', function () {
     $this->withSession(evSession($officer))
         ->post(route('officer.activities.store'), evPayload());
 
-    expect(evBroadcastRecipients())->not->toContain($pending->id);
+    evApproveAll(ClubActivity::where('title', 'General Assembly')->firstOrFail(), $adviser);
+
+    expect(evBroadcastRecipients())->toContain($member->id)
+        ->not->toContain($pending->id);
 });
 
 it('P3: respects the activity\'s target year levels', function () {
     Event::fake([NotificationCreated::class]);
 
-    [$officer, $club] = evAudience();
+    [$officer, $club, $adviser] = evAudience();
 
     $firstYear  = evUser('member');
     $fourthYear = evUser('member');
@@ -713,18 +742,22 @@ it('P3: respects the activity\'s target year levels', function () {
             'target_year_levels' => [1],
         ]));
 
+    evApproveAll(ClubActivity::where('title', 'First Years Only')->firstOrFail(), $adviser);
+
     expect(evBroadcastRecipients())->toContain($firstYear->id)
         ->and(evBroadcastRecipients())->not->toContain($fourthYear->id);
 });
 
 it('P3: the member broadcast carries the activity schedule and a link', function () {
-    [$officer, $club, , $member] = evAudience();
+    [$officer, $club, $adviser, $member] = evAudience();
 
     $this->withSession(evSession($officer))
         ->post(route('officer.activities.store'), evPayload([
             'title' => 'General Assembly',
             'venue' => 'AVR',
         ]));
+
+    evApproveAll(ClubActivity::where('title', 'General Assembly')->firstOrFail(), $adviser);
 
     $notification = ClubNotification::where('recipient_id', $member->id)->latest('id')->firstOrFail();
 
@@ -916,19 +949,31 @@ it('A1: puts an approval-requiring activity in its own adviser queue', function 
         ->assertSee('ACLE Outreach');
 });
 
-it('A1: never sends an internal meeting to the adviser', function () {
+it('A1: sends an internal meeting through the VPA and then the adviser too', function () {
+    // POLICY: every activity an officer adds needs both approvals — meetings included.
     [$officer, , $adviser] = evWithAdviser();
+    $vpa = evVpa();
 
     $this->withSession(evSession($officer))
         ->post(route('officer.activities.store'), evPayload(['title' => 'Weekly Huddle']));
+    $this->flushSession();
 
-    expect(ClubActivity::where('title', 'Weekly Huddle')->first()->approval_status)
-        ->toBe('no_approval_needed');
+    $activity = ClubActivity::where('title', 'Weekly Huddle')->firstOrFail();
+
+    expect($activity->activity_type)->toBe('internal_meeting')
+        ->and($activity->approval_status)->toBe('pending_vpa')
+        ->and($activity->isConfirmed())->toBeFalse()
+        ->and($activity->hasBookingLetter())->toBeTrue();
+
+    $this->withSession(evSession($vpa))->post(route('vpa.letters.approve', $activity));
+    $this->flushSession();
+
+    expect($activity->fresh()->approval_status)->toBe('pending_approval');
 
     $this->withSession(evSession($adviser))
         ->get(route('adviser.activities.review'))
         ->assertOk()
-        ->assertDontSee('Weekly Huddle');
+        ->assertSee('Weekly Huddle');
 });
 
 it('A1: notifies the adviser that an activity is waiting', function () {
@@ -1163,7 +1208,7 @@ it('P1: still accepts an activity starting later today', function () {
             'time_start' => '16:00',
             'time_end'   => '17:00',
         ]))
-        ->assertRedirect(route('officer.activities.index'));
+        ->assertSessionHasNoErrors();
 
     expect(ClubActivity::count())->toBe(1);
 });

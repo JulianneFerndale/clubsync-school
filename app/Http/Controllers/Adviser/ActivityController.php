@@ -20,10 +20,9 @@ use Illuminate\View\View;
 /**
  * The club adviser's activity review queue (POLICY.md §Event Creation).
  *
- * Internal meetings never arrive here — they are scheduled the moment the officer
- * submits them. Everything else (ACLE, community involvement, campus resource use,
- * other external activity) goes first to the Vice President for Administration with a
- * room booking letter, and reaches the adviser once the VPA has approved it. The
+ * Every activity an officer adds, internal meetings included, goes first to the Vice
+ * President for Administration with a room booking letter, and reaches the adviser once
+ * the VPA has approved it. The
  * adviser's approval is the last one, and the point at which the activity becomes
  * real: members are told, and it is copied onto their calendars. Approving signs the
  * letter under "Noted by".

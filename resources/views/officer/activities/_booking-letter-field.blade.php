@@ -1,6 +1,6 @@
 {{--
     The room booking letter on the activity form (POLICY.md §Event Creation), for every
-    activity but an internal meeting. The officer drafts the body (AI, or the template
+    activity, internal meetings included. The officer drafts the body (AI, or the template
     when the AI is unavailable), reads and edits it, and sends it signed with their name.
     Pressing Send with the letter still empty drafts it first and stops, so the officer
     always reads what goes to the VPA (POLICY.md §AI & Automation).
@@ -14,8 +14,7 @@
     $acronym     = $club?->acronym ?: ($club?->name ?? 'Club');
 @endphp
 
-<div x-show="activityType !== 'internal_meeting'" x-cloak id="booking-letter"
-     class="border border-[#07873e]/25 rounded-xl overflow-hidden scroll-mt-4">
+<div id="booking-letter" class="border border-[#07873e]/25 rounded-xl overflow-hidden scroll-mt-4">
     <div class="bg-[#07873e]/5 px-4 py-3 border-b border-[#07873e]/15">
         <p class="text-sm font-semibold text-[#07873e]">Room Booking Letter to the VPA <span class="text-red-500">*</span></p>
         <p class="text-xs text-gray-600 mt-0.5">
@@ -94,7 +93,6 @@
     const label  = document.getElementById('letter-draft-label');
 
     const field = (name) => form.querySelector(`[name="${name}"]`);
-    const needsLetter = () => (field('activity_type')?.value ?? 'internal_meeting') !== 'internal_meeting';
 
     const show = (text, tone) => {
         const tones = {
@@ -183,7 +181,7 @@
     // goes. Registered on window in the capture phase so it runs before the page-wide
     // loading overlay, which would otherwise lock the form for a submission that waits.
     window.addEventListener('submit', async (e) => {
-        if (e.target !== form || ! needsLetter() || textarea.value.trim()) return;
+        if (e.target !== form || textarea.value.trim()) return;
         if (! form.checkValidity()) return;
 
         e.preventDefault();

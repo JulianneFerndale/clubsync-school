@@ -120,15 +120,25 @@ function mlActivity(Club $club, User $creator, array $overrides = []): ClubActiv
 
 // ── A new activity reaches the member's Upcoming tab, live ──────────────────
 
-it('pushes a new activity to the members and lists it on their Upcoming tab', function () {
+it('pushes a new activity to the members once it is approved, and lists it on their Upcoming tab', function () {
     [$club, $treasurer, $members] = mlClub();
     $member = $members->first();
+
+    $adviser = mlUser('adviser');
+    $club->update(['adviser_id' => $adviser->id]);
+    $vpa = mlUser('vpa');
 
     $this->withSession(mlSession($treasurer))->post(route('officer.activities.store'), [
         'title' => 'Planning Huddle', 'description' => 'Plan the semester.', 'date' => now()->addDays(6)->toDateString(),
         'time_start' => '13:00', 'time_end' => '14:00', 'venue' => 'AVR', 'purpose' => 'Plan the semester.',
         'expected_participants' => 20, 'activity_type' => 'internal_meeting', 'confirmed' => 1,
     ])->assertRedirect();
+
+    // Every activity waits for the VPA, then the adviser; only then do members hear of it.
+    $activity = ClubActivity::where('title', 'Planning Huddle')->firstOrFail();
+    $this->withSession(mlSession($vpa))->post(route('vpa.letters.approve', $activity));
+    $this->withSession(mlSession($adviser))->post(route('adviser.activities.approve', $activity));
+    $this->flushSession();
 
     // The push carries the club, which is what refreshes an open page (app.js).
     Event::assertDispatched(NotificationCreated::class, fn (NotificationCreated $e) => $e->notification->recipient_id === $member->id

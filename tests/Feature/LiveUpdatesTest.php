@@ -446,7 +446,10 @@ test('an edit that leaves the times unchanged neither logs a time change nor not
         ->flatMap(fn ($log) => array_column($log->changes, 'field'))
         ->all();
 
-    expect($fields)->toBe(['expected_participants']);
+    // The edit is real, so it goes back to the VPA (approval_status), but no time moved.
+    expect($fields)->toContain('expected_participants')
+        ->not->toContain('time_start')
+        ->not->toContain('time_end');
     Queue::assertNotPushed(NotifyMembersOfActivity::class);
 });
 

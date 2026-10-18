@@ -73,8 +73,8 @@
         <p class="text-sm text-gray-700 leading-relaxed">{{ $event->purpose }}</p>
     </div>
 
-    {{-- Approval: the VPA's, then the adviser's (non-internal activities) --}}
-    @if($event->activity_type !== 'internal_meeting')
+    {{-- Approval: the VPA's, then the adviser's (every activity but a meeting scheduled before that rule) --}}
+    @if($event->hasBookingLetter() || $event->approval_status !== 'no_approval_needed')
     <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-3">
         <div class="flex items-center justify-between">
             <p class="text-sm font-semibold text-gray-700">{{ $event->hasBookingLetter() ? 'Room Booking Letter' : 'Adviser Approval' }}</p>
