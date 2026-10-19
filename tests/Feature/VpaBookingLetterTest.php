@@ -20,10 +20,10 @@ uses(RefreshDatabase::class);
 /*
  * POLICY.md §Event Creation — room booking letters.
  *
- * An activity that needs approval is sent with a room booking letter (docs/BOOKING OF
- * ROOMS.docx), signed by the officer who sends it. It goes to the Vice President for
- * Administration first — an account run by the VPA or the SSG — then to the club
- * adviser, and is confirmed once both approve, each signing the letter.
+ * Every activity is sent with a room booking letter (docs/BOOKING OF ROOMS.docx), signed
+ * by the officer who sends it. It goes to the club adviser first, then to the Vice
+ * President for Administration — an account run by the VPA or the SSG — and is
+ * confirmed once both approve, each signing the letter.
  */
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -118,6 +118,14 @@ function vlSend(User $officer, array $overrides = []): ClubActivity
     return ClubActivity::where('title', $overrides['title'] ?? 'General Assembly')->latest('id')->firstOrFail();
 }
 
+function vlApproveAsAdviser(User $adviser, ClubActivity $activity): ClubActivity
+{
+    test()->withSession(vlSession($adviser))->post(route('adviser.activities.approve', $activity));
+    test()->flushSession();
+
+    return $activity->fresh();
+}
+
 function vlApproveAsVpa(User $vpa, ClubActivity $activity): ClubActivity
 {
     test()->withSession(vlSession($vpa))->post(route('vpa.letters.approve', $activity));
@@ -151,22 +159,23 @@ beforeEach(function () {
 
 // ── 1. The officer sends the activity with a signed letter ──────────────────
 
-it('sends an approval-requiring activity to the VPA first, with a signed letter', function () {
+it('sends a new activity to the club adviser first, with a signed letter', function () {
     [$officer, $club, $adviser, $member, $vpa] = vlClub();
 
     $activity = vlSend($officer);
 
-    expect($activity->approval_status)->toBe('pending_vpa')
+    expect($activity->approval_status)->toBe('pending_approval')
         ->and($activity->isConfirmed())->toBeFalse()
         ->and($activity->letter_body)->toContain('PC 2-1')
         ->and($activity->letter_ai_drafted)->toBeFalse()
         ->and($activity->letterSignature('officer')['user_id'])->toBe($officer->id)
         ->and($activity->letterSignature('officer')['position'])->toBe($club->acronym . ' Club President')
+        ->and($activity->letterSignature('adviser'))->toBeNull()
         ->and($activity->letterSignature('vpa'))->toBeNull();
 
-    // The VPA is told; the adviser and the members are not, yet.
-    expect(ClubNotification::where('recipient_id', $vpa->id)->where('title', 'Room booking letter to approve')->exists())->toBeTrue()
-        ->and(ClubNotification::where('recipient_id', $adviser->id)->exists())->toBeFalse()
+    // The adviser is told; the VPA and the members are not, yet.
+    expect(ClubNotification::where('recipient_id', $adviser->id)->where('title', 'Activity to review')->exists())->toBeTrue()
+        ->and(ClubNotification::where('recipient_id', $vpa->id)->exists())->toBeFalse()
         ->and(ClubNotification::where('recipient_id', $member->id)->exists())->toBeFalse();
 
     expect(AuditLog::where('action', 'activity.letter.sent')->exists())->toBeTrue();
@@ -194,28 +203,33 @@ it('refuses a letter that does not name the room being booked', function () {
     expect(ClubActivity::count())->toBe(0);
 });
 
-it('sends an internal meeting to the VPA with a letter too', function () {
-    // Every activity an officer adds needs the VPA's approval, then the adviser's.
+it('sends an internal meeting to the adviser and the VPA with a letter too', function () {
+    // Every activity an officer adds needs the adviser's approval, then the VPA's.
     [$officer, , $adviser, $member, $vpa] = vlClub();
 
     $activity = vlSend($officer, ['activity_type' => 'internal_meeting']);
 
-    expect($activity->approval_status)->toBe('pending_vpa')
+    expect($activity->approval_status)->toBe('pending_approval')
         ->and($activity->isConfirmed())->toBeFalse()
         ->and($activity->hasBookingLetter())->toBeTrue()
         ->and($activity->letterSignature('officer')['user_id'])->toBe($officer->id)
-        ->and(ClubNotification::where('recipient_id', $vpa->id)->exists())->toBeTrue()
+        ->and(ClubNotification::where('recipient_id', $adviser->id)->exists())->toBeTrue()
+        ->and(ClubNotification::where('recipient_id', $member->id)->exists())->toBeFalse();
+
+    $activity = vlApproveAsAdviser($adviser, $activity);
+
+    expect($activity->approval_status)->toBe('pending_vpa')
+        ->and($activity->isConfirmed())->toBeFalse()
         ->and(ClubNotification::where('recipient_id', $member->id)->exists())->toBeFalse();
 
     $activity = vlApproveAsVpa($vpa, $activity);
-    $this->withSession(vlSession($adviser))->post(route('adviser.activities.approve', $activity));
 
-    expect($activity->fresh()->isConfirmed())->toBeTrue()
+    expect($activity->isConfirmed())->toBeTrue()
         ->and(ClubNotification::where('recipient_id', $member->id)->exists())->toBeTrue();
 });
 
-it('sends a meeting scheduled before the VPA step to the VPA once it is changed', function () {
-    [$officer, $club, , , $vpa] = vlClub();
+it('sends a meeting scheduled before the approval step to the adviser once it is changed', function () {
+    [$officer, $club, $adviser, , $vpa] = vlClub();
 
     $legacy = ClubActivity::create([
         'club_id' => $club->id, 'title' => 'Weekly Huddle', 'description' => 'Huddle.',
@@ -246,9 +260,10 @@ it('sends a meeting scheduled before the VPA step to the VPA once it is changed'
 
     $fresh = $legacy->fresh();
 
-    expect($fresh->approval_status)->toBe('pending_vpa')
+    expect($fresh->approval_status)->toBe('pending_approval')
         ->and($fresh->letter_body)->toContain('PC 2-1')
-        ->and(ClubNotification::where('recipient_id', $vpa->id)->exists())->toBeTrue();
+        ->and(ClubNotification::where('recipient_id', $adviser->id)->where('title', 'Activity to review')->exists())->toBeTrue()
+        ->and(ClubNotification::where('recipient_id', $vpa->id)->exists())->toBeFalse();
 });
 
 it('writes the template letter from the activity details', function () {
@@ -269,21 +284,112 @@ it('writes the template letter from the activity details', function () {
 });
 
 it('tells the DSA when there is no VPA account to approve the letter', function () {
-    [$officer] = vlClub();
+    [$officer, , $adviser] = vlClub();
     User::where('role', 'vpa')->delete();
     $dsa = vlUser('dsa');
 
-    $activity = vlSend($officer);
+    $activity = vlApproveAsAdviser($adviser, vlSend($officer));
 
     expect($activity->approval_status)->toBe('pending_vpa')
         ->and(ClubNotification::where('recipient_id', $dsa->id)->where('title', 'Letter waiting — no VPA account')->exists())->toBeTrue();
 });
 
-// ── 2. The VPA approves or returns it ───────────────────────────────────────
+// ── 2. The adviser approves it first ────────────────────────────────────────
+
+it('signs the letter and sends it on to the VPA when the adviser approves', function () {
+    [$officer, $club, $adviser, $member, $vpa] = vlClub();
+    $activity = vlSend($officer);
+
+    $this->withSession(vlSession($adviser))
+        ->get(route('adviser.activities.show', $activity))
+        ->assertOk()
+        ->assertSee('Approve &amp; Sign', false)
+        ->assertSee('sends it to the Vice President for Administration');
+
+    $this->withSession(vlSession($adviser))
+        ->post(route('adviser.activities.approve', $activity))
+        ->assertSessionHas('success');
+
+    $fresh = $activity->fresh();
+
+    expect($fresh->approval_status)->toBe('pending_vpa')
+        ->and($fresh->isConfirmed())->toBeFalse()
+        ->and($fresh->approved_by)->toBe($adviser->id)
+        ->and($fresh->letterSignature('adviser')['user_id'])->toBe($adviser->id)
+        ->and($fresh->letterSignature('adviser')['position'])->toBe($club->acronym . ' Club Adviser')
+        ->and($fresh->letterSignature('vpa'))->toBeNull();
+
+    expect(ClubNotification::where('recipient_id', $vpa->id)->where('title', 'Room booking letter to approve')->exists())->toBeTrue()
+        ->and(ClubNotification::where('recipient_id', $officer->id)->where('title', 'Letter approved by the adviser')->exists())->toBeTrue()
+        ->and(ClubNotification::where('recipient_id', $member->id)->exists())->toBeFalse()
+        ->and(AuditLog::where('action', 'activity.letter.adviser_approved')->exists())->toBeTrue();
+
+    $this->flushSession();
+
+    $this->withSession(vlSession($adviser))
+        ->get(route('adviser.activities.review'))
+        ->assertOk()
+        ->assertSee('Approved by You — With the VPA');
+});
+
+it('keeps a letter from the VPA until the adviser has approved it', function () {
+    [$officer, , , , $vpa] = vlClub();
+    $activity = vlSend($officer);
+
+    $this->withSession(vlSession($vpa))
+        ->get(route('vpa.dashboard'))
+        ->assertOk()
+        ->assertDontSee('General Assembly');
+
+    $this->withSession(vlSession($vpa))->get(route('vpa.letters.show', $activity))->assertNotFound();
+    $this->withSession(vlSession($vpa))->post(route('vpa.letters.approve', $activity))->assertNotFound();
+
+    expect($activity->fresh()->approval_status)->toBe('pending_approval');
+});
+
+it('lets the adviser take back an approval before the VPA decides', function () {
+    [$officer, , $adviser, , $vpa] = vlClub();
+    $activity = vlApproveAsAdviser($adviser, vlSend($officer));
+
+    $this->withSession(vlSession($adviser))
+        ->post(route('adviser.activities.reject', $activity), ['review_remarks' => 'Move it to a bigger room first.'])
+        ->assertSessionHas('success');
+
+    $fresh = $activity->fresh();
+
+    expect($fresh->approval_status)->toBe('rejected')
+        ->and($fresh->wasRejectedByVpa())->toBeFalse();
+
+    $this->flushSession();
+
+    // No longer the VPA's to decide.
+    $this->withSession(vlSession($vpa))->post(route('vpa.letters.approve', $activity))->assertNotFound();
+});
+
+it('confirms a letter the VPA approved under the old order when the adviser approves it', function () {
+    [$officer, $club, $adviser, $member, $vpa] = vlClub();
+    $activity = vlSend($officer);
+
+    // Sent before the order changed: the VPA read it first and it is with the adviser.
+    $activity->update([
+        'vpa_decision'      => 'approved',
+        'vpa_reviewed_by'   => $vpa->id,
+        'vpa_reviewed_at'   => now(),
+        'letter_signatures' => $activity->letter_signatures + ['vpa' => ['user_id' => $vpa->id, 'name' => config('vpa.name'), 'position' => config('vpa.title'), 'signed_at' => now()->toIso8601String(), 'signature_path' => null, 'signed_by' => $vpa->name]],
+    ]);
+
+    $fresh = vlApproveAsAdviser($adviser, $activity);
+
+    expect($fresh->approval_status)->toBe('approved')
+        ->and($fresh->isConfirmed())->toBeTrue()
+        ->and(ClubNotification::where('recipient_id', $member->id)->exists())->toBeTrue();
+});
+
+// ── 3. The VPA approves or returns it ───────────────────────────────────────
 
 it('shows the VPA the letter on their dashboard and review page', function () {
-    [$officer, $club, , , $vpa] = vlClub();
-    $activity = vlSend($officer);
+    [$officer, $club, $adviser, , $vpa] = vlClub();
+    $activity = vlApproveAsAdviser($adviser, vlSend($officer));
 
     $this->withSession(vlSession($vpa))
         ->get(route('vpa.dashboard'))
@@ -303,9 +409,10 @@ it('shows the VPA the letter on their dashboard and review page', function () {
         ->assertSee('Return with remarks');
 });
 
-it('signs the letter and passes the activity to the adviser when the VPA approves', function () {
+it('signs the letter and confirms the activity when the VPA approves', function () {
     [$officer, $club, $adviser, $member, $vpa] = vlClub();
-    $activity = vlSend($officer);
+    $activity = vlApproveAsAdviser($adviser, vlSend($officer));
+    ClubNotification::query()->delete();
 
     $this->withSession(vlSession($vpa))
         ->post(route('vpa.letters.approve', $activity))
@@ -313,23 +420,24 @@ it('signs the letter and passes the activity to the adviser when the VPA approve
 
     $fresh = $activity->fresh();
 
-    expect($fresh->approval_status)->toBe('pending_approval')
+    expect($fresh->approval_status)->toBe('approved')
+        ->and($fresh->isConfirmed())->toBeTrue()
         ->and($fresh->vpa_decision)->toBe('approved')
         ->and($fresh->vpa_reviewed_by)->toBe($vpa->id)
         ->and($fresh->letterSignature('vpa')['name'])->toBe(config('vpa.name'))
         ->and($fresh->letterSignature('vpa')['signed_by'])->toBe($vpa->name)
-        ->and($fresh->letterSignature('officer')['user_id'])->toBe($officer->id)
-        ->and($fresh->isConfirmed())->toBeFalse();
+        ->and($fresh->letterSignature('adviser')['user_id'])->toBe($adviser->id)
+        ->and($fresh->letterSignature('officer')['user_id'])->toBe($officer->id);
 
-    expect(ClubNotification::where('recipient_id', $adviser->id)->where('title', 'Activity to review')->exists())->toBeTrue()
-        ->and(ClubNotification::where('recipient_id', $officer->id)->where('title', 'Letter approved by the VPA')->exists())->toBeTrue()
-        ->and(ClubNotification::where('recipient_id', $member->id)->exists())->toBeFalse()
+    expect(ClubNotification::where('recipient_id', $member->id)->exists())->toBeTrue()
+        ->and(ClubNotification::where('recipient_id', $officer->id)->where('title', 'Activity approved')->exists())->toBeTrue()
+        ->and(ClubNotification::where('recipient_id', $adviser->id)->where('title', 'Activity approved')->exists())->toBeTrue()
         ->and(AuditLog::where('action', 'activity.letter.vpa_approved')->exists())->toBeTrue();
 });
 
 it('needs remarks to return a letter, and releases the room when it does', function () {
-    [$officer, , , , $vpa] = vlClub();
-    $activity = vlSend($officer);
+    [$officer, , $adviser, , $vpa] = vlClub();
+    $activity = vlApproveAsAdviser($adviser, vlSend($officer));
 
     $this->withSession(vlSession($vpa))
         ->post(route('vpa.letters.reject', $activity), ['review_remarks' => ''])
@@ -355,19 +463,19 @@ it('needs remarks to return a letter, and releases the room when it does', funct
 });
 
 it('lets the VPA decide a letter only once', function () {
-    [$officer, , , , $vpa] = vlClub();
-    $activity = vlApproveAsVpa($vpa, vlSend($officer));
+    [$officer, , $adviser, , $vpa] = vlClub();
+    $activity = vlApproveAsVpa($vpa, vlApproveAsAdviser($adviser, vlSend($officer)));
 
     $this->withSession(vlSession($vpa))
         ->post(route('vpa.letters.reject', $activity), ['review_remarks' => 'Changed my mind about it.'])
         ->assertSessionHas('error');
 
-    expect($activity->fresh()->approval_status)->toBe('pending_approval');
+    expect($activity->fresh()->approval_status)->toBe('approved');
 });
 
 it('keeps the VPA pages to the VPA', function (string $role) {
     [$officer, $club, $adviser, $member] = vlClub();
-    $activity = vlSend($officer);
+    $activity = vlApproveAsAdviser($adviser, vlSend($officer));
 
     $user = match ($role) {
         'officer' => $officer,
@@ -383,16 +491,14 @@ it('keeps the VPA pages to the VPA', function (string $role) {
     expect($activity->fresh()->approval_status)->toBe('pending_vpa');
 })->with(['officer', 'adviser', 'member', 'dsa']);
 
-// ── 3. The adviser confirms it ──────────────────────────────────────────────
-
-it('does not let the adviser decide before the VPA has', function () {
-    [$officer, , $adviser, , $vpa] = vlClub();
-    $activity = vlSend($officer);
+it('does not let the adviser approve twice while the letter is with the VPA', function () {
+    [$officer, , $adviser] = vlClub();
+    $activity = vlApproveAsAdviser($adviser, vlSend($officer));
 
     $this->withSession(vlSession($adviser))
-        ->get(route('adviser.activities.review'))
+        ->get(route('adviser.activities.show', $activity))
         ->assertOk()
-        ->assertSee('With the VPA');
+        ->assertSee('It is with the Vice President for Administration for final approval.');
 
     $this->withSession(vlSession($adviser))
         ->post(route('adviser.activities.approve', $activity))
@@ -401,37 +507,16 @@ it('does not let the adviser decide before the VPA has', function () {
     expect($activity->fresh()->approval_status)->toBe('pending_vpa');
 });
 
-it('confirms the activity and signs the letter when the adviser approves after the VPA', function () {
-    [$officer, $club, $adviser, $member, $vpa] = vlClub();
-    $activity = vlApproveAsVpa($vpa, vlSend($officer));
+// ── 4. Editing sends the letter back to the adviser ─────────────────────────
 
-    $this->withSession(vlSession($adviser))
-        ->get(route('adviser.activities.show', $activity))
-        ->assertOk()
-        ->assertSee('Approve &amp; Sign', false);
-
-    $this->withSession(vlSession($adviser))
-        ->post(route('adviser.activities.approve', $activity));
-
-    $fresh = $activity->fresh();
-
-    expect($fresh->approval_status)->toBe('approved')
-        ->and($fresh->isConfirmed())->toBeTrue()
-        ->and($fresh->letterSignature('adviser')['user_id'])->toBe($adviser->id)
-        ->and($fresh->letterSignature('adviser')['position'])->toBe($club->acronym . ' Club Adviser')
-        ->and($fresh->letterSignature('vpa'))->not->toBeNull()
-        ->and(ClubNotification::where('recipient_id', $member->id)->exists())->toBeTrue();
-});
-
-// ── 4. Editing sends the letter back to the VPA ─────────────────────────────
-
-it('sends a returned letter to the VPA again when the officer edits it', function () {
-    [$officer, , , , $vpa] = vlClub();
-    $activity = vlSend($officer);
+it('sends a returned letter to the adviser again when the officer edits it', function () {
+    [$officer, , $adviser, , $vpa] = vlClub();
+    $activity = vlApproveAsAdviser($adviser, vlSend($officer));
 
     $this->withSession(vlSession($vpa))
         ->post(route('vpa.letters.reject', $activity), ['review_remarks' => 'Please use a bigger room.']);
-    ClubNotification::where('recipient_id', $vpa->id)->delete();
+    $this->flushSession();
+    ClubNotification::where('recipient_id', $adviser->id)->delete();
 
     $this->withSession(vlSession($officer))
         ->patch(route('officer.activities.update', $activity), vlPayload([
@@ -442,11 +527,12 @@ it('sends a returned letter to the VPA again when the officer edits it', functio
 
     $fresh = $activity->fresh();
 
-    expect($fresh->approval_status)->toBe('pending_vpa')
+    expect($fresh->approval_status)->toBe('pending_approval')
         ->and($fresh->vpa_decision)->toBeNull()
         ->and($fresh->review_remarks)->toBeNull()
+        ->and($fresh->letterSignature('adviser'))->toBeNull()
         ->and($fresh->letter_body)->toContain('AVR')
-        ->and(ClubNotification::where('recipient_id', $vpa->id)->exists())->toBeTrue();
+        ->and(ClubNotification::where('recipient_id', $adviser->id)->where('title', 'Activity to review')->exists())->toBeTrue();
 });
 
 it('will not send a letter that still describes the old date, time or room', function () {
@@ -465,10 +551,7 @@ it('will not send a letter that still describes the old date, time or room', fun
 
 it('leaves an approved activity approved when it is saved unchanged', function () {
     [$officer, , $adviser, , $vpa] = vlClub();
-    $activity = vlApproveAsVpa($vpa, vlSend($officer));
-
-    $this->withSession(vlSession($adviser))->post(route('adviser.activities.approve', $activity));
-    $this->flushSession();
+    $activity = vlApproveAsVpa($vpa, vlApproveAsAdviser($adviser, vlSend($officer)));
 
     $this->withSession(vlSession($officer))
         ->patch(route('officer.activities.update', $activity), vlPayload(['letter_body' => $activity->letter_body]))
@@ -481,7 +564,7 @@ it('leaves an approved activity approved when it is saved unchanged', function (
 
 it('downloads the letter as a PDF for the club, the VPA, the adviser and the DSA', function () {
     [$officer, , $adviser, , $vpa] = vlClub();
-    $activity = vlApproveAsVpa($vpa, vlSend($officer));
+    $activity = vlApproveAsVpa($vpa, vlApproveAsAdviser($adviser, vlSend($officer)));
 
     foreach ([
         [$officer, route('officer.activities.booking-letter', $activity)],

@@ -14,7 +14,7 @@ use Illuminate\Queue\SerializesModels;
 /**
  * Tell a club's adviser that an officer submitted an activity for review.
  *
- * The adviser's queue is where an activity needing approval goes (POLICY.md
+ * The adviser's queue is where every new activity goes first, before the VPA (POLICY.md
  * §Event Creation); this notification is what brings them to it, and per
  * POLICY.md §Notifications the in-system notification is the system of record.
  *

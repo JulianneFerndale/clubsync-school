@@ -86,7 +86,7 @@
 
         @if($event->isAwaitingVpa())
             <div class="bg-[#F9A825]/10 border border-[#F9A825]/40 rounded-xl px-4 py-3 text-sm text-gray-700">
-                The letter is with the Vice President for Administration. You can confirm the activity once they approve it.
+                You approved and signed this letter. It is with the Vice President for Administration for final approval.
             </div>
         @endif
 
@@ -107,7 +107,11 @@
     @if($event->approval_status === 'pending_approval')
         @if($letter)
             <p class="text-xs text-gray-500">
-                Approving confirms the activity and signs the letter under "Noted by".
+                @if($event->vpa_decision === 'approved')
+                    The Vice President for Administration has already approved this letter. Approving signs it under "Noted by" and confirms the activity.
+                @else
+                    Approving signs the letter under "Noted by" and sends it to the Vice President for Administration, whose approval confirms the activity.
+                @endif
                 @unless($hasSignature)
                     You have no signature on file, so it will say it was signed electronically.
                     <a href="{{ route('profile') }}#signature" class="text-[#07873e] font-semibold underline">Add a signature</a>.

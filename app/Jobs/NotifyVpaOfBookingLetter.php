@@ -12,8 +12,9 @@ use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 
 /**
- * Tell the Vice President for Administration that a club sent a room booking letter
- * (POLICY.md §Event Creation): the first approval an activity needs, before its adviser.
+ * Tell the Vice President for Administration that a club's room booking letter is waiting
+ * for them (POLICY.md §Event Creation): the last approval an activity needs, after its
+ * adviser's.
  *
  * Every VPA account is told, since the office's account may be run by the SSG. With no
  * VPA account at all the letter would wait on nobody, so the DSA is told instead —
@@ -43,7 +44,7 @@ class NotifyVpaOfBookingLetter implements ShouldQueue
                     'sender_type'  => 'system',
                     'club_id'      => $club->id,
                     'title'        => 'Room booking letter to approve',
-                    'body'         => "{$club->name} asks to use {$activity->venue} for \"{$activity->title}\" on {$activity->date->format('M j, Y')}.",
+                    'body'         => "{$club->name} asks to use {$activity->venue} for \"{$activity->title}\" on {$activity->date->format('M j, Y')}. The club adviser has approved it.",
                     'action_url'   => route('vpa.letters.show', $activity),
                 ]);
             }

@@ -39,9 +39,9 @@ use Illuminate\Support\Str;
  */
 class ClubDeletion
 {
-    public const OFFICER_ROLES = ['president', 'treasurer', 'mmo'];
+    public const OFFICER_ROLES = User::OFFICER_ROLES;
 
-    public const STUDENT_ROLES = ['member', 'president', 'treasurer', 'mmo'];
+    public const STUDENT_ROLES = User::STUDENT_ROLES;
 
     public function __construct(private FirebaseService $firebase) {}
 

@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\User;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -16,8 +17,8 @@ class RoleMiddleware
             return redirect()->route('login');
         }
 
-        // 'officer' is an alias that covers president, treasurer, and mmo.
-        $allowed = array_map(fn ($r) => $r === 'officer' ? ['president', 'treasurer', 'mmo'] : [$r], $roles);
+        // 'officer' is an alias that covers every club officer position (User::OFFICER_ROLES).
+        $allowed = array_map(fn ($r) => $r === 'officer' ? User::OFFICER_ROLES : [$r], $roles);
         $allowed = array_merge(...$allowed);
 
         // 'admin' is not a role but the is_admin flag, which sits on top of any role

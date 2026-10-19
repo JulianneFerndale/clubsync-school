@@ -203,17 +203,18 @@ function gcBooking(Club $club, User $creator, array $overrides = []): ClubActivi
     ]);
 }
 
-/** The VPA's account, which approves every activity's room booking letter first. */
+/** The VPA's account, which approves every activity's room booking letter last. */
 function gcVpa(): User
 {
     return User::where('role', 'vpa')->first() ?? gcUser('vpa');
 }
 
-/** Take an activity through both approvals — the VPA's, then the adviser's. */
+/** Take an activity through both approvals — the adviser's, then the VPA's. */
 function gcApprove(ClubActivity $activity, User $adviser): ClubActivity
 {
-    test()->withSession(gcSession(gcVpa()))->post(route('vpa.letters.approve', $activity));
     test()->withSession(gcSession($adviser))->post(route('adviser.activities.approve', $activity));
+    test()->flushSession();
+    test()->withSession(gcSession(gcVpa()))->post(route('vpa.letters.approve', $activity));
     test()->flushSession();
 
     return $activity->fresh();
@@ -282,12 +283,12 @@ it('keeps an approval-requiring activity off calendars until the adviser approve
     $activity = ClubActivity::where('title', 'ACLE Outreach')->firstOrFail();
     expect($google->eventsOf($member))->toBeEmpty();
 
-    // The VPA approves the room booking letter first; that alone confirms nothing.
-    $this->withSession(gcSession(gcVpa()))->post(route('vpa.letters.approve', $activity));
-    expect($activity->fresh()->approval_status)->toBe('pending_approval')
+    // The adviser approves the room booking letter first; that alone confirms nothing.
+    $this->withSession(gcSession($adviser))->post(route('adviser.activities.approve', $activity));
+    expect($activity->fresh()->approval_status)->toBe('pending_vpa')
         ->and($google->eventsOf($member))->toBeEmpty();
 
-    $this->withSession(gcSession($adviser))->post(route('adviser.activities.approve', $activity));
+    $this->withSession(gcSession(gcVpa()))->post(route('vpa.letters.approve', $activity));
     expect($google->eventsOf($member))->toHaveCount(1);
 
     $this->withSession(gcSession($adviser))->post(route('adviser.activities.reject', $activity), ['review_remarks' => 'Venue unavailable after all.']);

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Adviser;
 use App\Http\Controllers\Controller;
 use App\Jobs\NotifyMembersOfActivity;
 use App\Jobs\NotifyOfficersOfActivityDecision;
+use App\Jobs\NotifyVpaOfBookingLetter;
 use App\Jobs\SyncToGoogleCalendars;
 use App\Models\AuditLog;
 use App\Models\Club;
@@ -20,12 +21,12 @@ use Illuminate\View\View;
 /**
  * The club adviser's activity review queue (POLICY.md §Event Creation).
  *
- * Every activity an officer adds, internal meetings included, goes first to the Vice
- * President for Administration with a room booking letter, and reaches the adviser once
- * the VPA has approved it. The
- * adviser's approval is the last one, and the point at which the activity becomes
- * real: members are told, and it is copied onto their calendars. Approving signs the
- * letter under "Noted by".
+ * Every activity an officer adds, internal meetings included, comes to the club adviser
+ * first, with a room booking letter. Approving signs the letter under "Noted by" and sends
+ * it on to the Vice President for Administration, whose approval is the last one and the
+ * point at which the activity becomes real: members are told, and it is copied onto their
+ * calendars. (A letter sent under the old order, which the VPA approved before the
+ * adviser, is confirmed by the adviser's approval.)
  *
  * Every action is scoped to the adviser's own club. Cross-club access is blocked at
  * the route middleware and again here (POLICY.md §Data Privacy), so an adviser cannot
@@ -53,8 +54,8 @@ class ActivityController extends Controller
     }
 
     /**
-     * Why an activity cannot be decided now, or null when it can: it must be past the VPA
-     * and in one of $from (an adviser may also withdraw an approval they gave).
+     * Why an activity cannot be decided now, or null when it can: it must be in one of
+     * $from (an adviser may also withdraw an approval they gave).
      */
     private function notDecidable(ClubActivity $event, array $from = ['pending_approval']): ?string
     {
@@ -63,7 +64,7 @@ class ActivityController extends Controller
         }
 
         return $event->isAwaitingVpa()
-            ? 'The Vice President for Administration has not approved this letter yet.'
+            ? 'You have approved this letter. It is with the Vice President for Administration now.'
             : 'This activity has already been decided.';
     }
 
@@ -79,7 +80,7 @@ class ActivityController extends Controller
                 ->get()
             : collect();
 
-        // Not the adviser's to decide yet, but theirs to know about.
+        // Approved by the adviser, waiting on the VPA's final approval.
         $withVpa = $club
             ? ClubActivity::where('club_id', $club->id)
                 ->where('approval_status', 'pending_vpa')
@@ -121,14 +122,18 @@ class ActivityController extends Controller
             return back()->with('error', $error);
         }
 
+        // A letter goes on to the VPA, whose approval is the last one — unless the VPA
+        // already approved it, under the old order in which they read it first.
+        $toVpa = $event->hasBookingLetter() && $event->vpa_decision !== 'approved';
+
         $changes = [
-            'approval_status' => 'approved',
+            'approval_status' => $toVpa ? 'pending_vpa' : 'approved',
             'approved_by'     => auth_user_id(),
             'approved_at'     => now(),
             'review_remarks'  => null,
         ];
 
-        // Confirming signs the room booking letter under "Noted by".
+        // Approving signs the room booking letter under "Noted by".
         if ($event->hasBookingLetter() && ($adviser = User::find(auth_user_id()))) {
             $changes['letter_signatures'] = array_merge($event->letter_signatures ?? [], [
                 'adviser' => $this->letters->sign($adviser, BookingLetter::adviserPosition($event->club)),
@@ -136,6 +141,15 @@ class ActivityController extends Controller
         }
 
         $event->update($changes);
+
+        if ($toVpa) {
+            AuditLog::record('activity.letter.adviser_approved', $event, ['club_id' => $event->club_id, 'venue' => $event->venue]);
+
+            NotifyOfficersOfActivityDecision::dispatch($event->id, NotifyOfficersOfActivityDecision::ADVISER_APPROVED);
+            NotifyVpaOfBookingLetter::dispatch($event->id);
+
+            return back()->with('success', 'Approved and signed. The letter is now with the Vice President for Administration for final approval.');
+        }
 
         AuditLog::record('activity.approved', $event, ['club_id' => $event->club_id]);
 
@@ -160,7 +174,8 @@ class ActivityController extends Controller
             'review_remarks.required' => 'Please provide a reason for rejection.',
         ]);
 
-        if ($error = $this->notDecidable($event, ['pending_approval', 'approved'])) {
+        // Before the VPA decides, the adviser may still take back the approval they gave.
+        if ($error = $this->notDecidable($event, ['pending_approval', 'pending_vpa', 'approved'])) {
             return back()->with('error', $error);
         }
 

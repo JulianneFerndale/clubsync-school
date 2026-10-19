@@ -1,4 +1,4 @@
-@props(['label' => 'Continue with Google', 'divider' => 'or'])
+@props(['label' => 'Continue with Google', 'divider' => 'or', 'as' => null])
 {{--
     "Continue with Google", for SCC Google Workspace accounts only. Renders nothing until
     the OAuth client is set up (config/google.php → sign_in), so the page shows exactly
@@ -7,6 +7,7 @@
     A full page load, never Turbo: the route redirects to accounts.google.com, which
     Turbo's fetch cannot follow, and a hover prefetch would start a sign-in nobody asked
     for. Styled to Google's sign-in button guidelines (white, grey outline, the "G").
+    as="adviser": started from the adviser pages, so it opens adviser accounts only.
 --}}
 @if (app(\App\Services\GoogleSignIn::class)->isConfigured())
     <div {{ $attributes }}>
@@ -18,7 +19,7 @@
             </div>
         @endif
 
-        <a href="{{ route('auth.google') }}" data-turbo="false" data-google-sign-in
+        <a href="{{ route('auth.google', $as ? ['as' => $as] : []) }}" data-turbo="false" data-google-sign-in
            class="flex items-center justify-center gap-3 w-full bg-white border border-[#747775] text-[#1F1F1F] font-medium text-[15px] py-3.5 px-6 rounded-full hover:bg-gray-50 focus:bg-gray-50 transition-colors">
             <svg class="w-5 h-5 flex-shrink-0" viewBox="0 0 48 48" aria-hidden="true">
                 <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>

@@ -45,11 +45,13 @@ php artisan db:seed --class=SeedAdmin
 **Middleware stack (routes/web.php):**
 - `firebase.token` — validates/refreshes Firebase JWT in session
 - `guest.firebase` — blocks authenticated users from auth pages
-- `role:{role}` — enforces RBAC; the alias `officer` covers president/treasurer/mmo roles
+- `role:{role}` — enforces RBAC; the alias `officer` covers every officer position (`User::OFFICER_ROLES`)
 
-**Roles:** `admin`, `dsa`, `vpa`, `adviser`, `president`, `treasurer`, `mmo`, `member`
+**Roles:** `admin`, `dsa`, `vpa`, `adviser`, `member`, and the officer positions `president`, `vice_president`, `secretary`, `treasurer`, `auditor`, `mmo_internal`, `mmo_external` (plus the legacy `mmo`). An officer position is always held in one club (`club_officers`), given by an administrator on Manage Users. Labels and lists live on `App\Models\User` (`POSITION_LABELS`, `OFFICER_ROLES`, `STUDENT_ROLES`).
 
-`vpa` is the Vice President for Administration (run by the VPA or the SSG): it approves the room booking letter every new activity (internal meetings included) is sent with, before the club adviser (`ClubActivity` `approval_status`: `pending_vpa` → `pending_approval` → `approved`). Create the account with `php artisan app:create-vpa --email=…`. The letter is composed by `App\Services\BookingLetter` (PDF via dompdf); signatures by `App\Services\SignatureStorage`.
+Advisers are employees: they sign in at `/login/adviser` (adviser number = `users.employee_number`) and sign up at `/register/adviser` (`Auth\AdviserRegisterController`), picking a club with no adviser as a request (`users.requested_club_id`) that an administrator confirms on Manage Users. One adviser per club, one club per adviser.
+
+`vpa` is the Vice President for Administration (run by the VPA or the SSG): it gives the last approval of the room booking letter every new activity (internal meetings included) is sent with, after the club adviser (`ClubActivity` `approval_status`: `pending_approval` (adviser) → `pending_vpa` → `approved`). Create the account with `php artisan app:create-vpa --email=…`. The letter is composed by `App\Services\BookingLetter` (PDF via dompdf); signatures by `App\Services\SignatureStorage`.
 
 Controllers are grouped by role under `app/Http/Controllers/{Admin,DSA,VPA,Adviser,Officer,Member}/`.
 

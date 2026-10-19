@@ -18,32 +18,32 @@
 
     {{-- Validation errors --}}
 
-    @if(in_array($event->approval_status, ['approved', 'pending_approval'], true))
+    @if(in_array($event->approval_status, ['approved', 'pending_vpa'], true))
         <div class="mb-4 bg-[#F9A825]/10 border border-[#F9A825]/40 rounded-xl px-4 py-3">
             <p class="text-sm text-gray-700 font-medium">
-                {{ $event->approval_status === 'approved' ? 'This activity is already approved.' : 'The VPA has already approved this letter.' }}
-                Saving a change signs the letter again and sends it back to the Vice President for Administration, so it needs their approval and the adviser's again.
+                {{ $event->approval_status === 'approved' ? 'This activity is already approved.' : 'Your club adviser has already approved this letter.' }}
+                Saving a change signs the letter again and sends it back to your club adviser, so it needs their approval and the Vice President for Administration's again.
             </p>
         </div>
     @elseif($event->approval_status === 'no_approval_needed')
         <div class="mb-4 bg-[#F9A825]/10 border border-[#F9A825]/40 rounded-xl px-4 py-3">
             <p class="text-sm text-gray-700 font-medium">
-                This meeting was scheduled before every activity needed approval. Saving a change sends it with a room booking letter to the Vice President for Administration, then to your adviser, and it is off members' schedules until both approve.
+                This meeting was scheduled before every activity needed approval. Saving a change sends it with a room booking letter to your adviser, then to the Vice President for Administration, and it is off members' schedules until both approve.
             </p>
         </div>
     @elseif($event->approval_status === 'rejected')
         <div class="mb-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
             <p class="text-sm text-red-700 font-medium">
                 {{ $event->wasRejectedByVpa() ? 'The Vice President for Administration returned this letter.' : 'The club adviser did not approve this activity.' }}
-                Make the changes asked for, then save to sign the letter and send it to the VPA again.
+                Make the changes asked for, then save to sign the letter and send it to your adviser again.
             </p>
             @if($event->review_remarks)
                 <p class="text-xs text-red-600 mt-1">Remarks: {{ $event->review_remarks }}</p>
             @endif
         </div>
-    @elseif($event->isAwaitingVpa())
+    @elseif($event->approval_status === 'pending_approval')
         <div class="mb-4 bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
-            <p class="text-sm text-gray-700">The letter is with the Vice President for Administration. Changes you save replace the letter they see, signed again by you.</p>
+            <p class="text-sm text-gray-700">The letter is with your club adviser. Changes you save replace the letter they see, signed again by you.</p>
         </div>
     @endif
 
@@ -217,7 +217,7 @@
             @enderror
         </div>
 
-        {{-- Room booking letter to the VPA (every activity) --}}
+        {{-- Room booking letter to the VPA, through the adviser (every activity) --}}
         @include('officer.activities._booking-letter-field', [
             'letterBody' => old('letter_body', $event->letter_body ?? ''),
             'aiDrafted'  => old('letter_ai_drafted', $event->letter_ai_drafted ? '1' : '0'),

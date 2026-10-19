@@ -16,8 +16,9 @@
 
     {{-- Form --}}
     <div class="flex-1 px-8 pb-12">
-        <h1 class="text-2xl font-bold text-green-900 mb-8">Login to your account</h1>
+        <h1 class="text-2xl font-bold text-green-900 mb-6">Login to your account</h1>
 
+        @include('auth._sign-in-tabs', ['active' => 'student'])
 
         <form id="login-form" method="POST" action="{{ route('login') }}" data-turbo="false" class="space-y-5"
               data-loading="splash" data-loading-message="Signing you in…">

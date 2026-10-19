@@ -29,12 +29,42 @@ class LoginController extends Controller
         return view('auth.login');
     }
 
+    /** The advisers' own sign-in: they are employees, not students (POLICY.md §Authentication). */
+    public function showAdviser(): View
+    {
+        return view('auth.login-adviser');
+    }
+
     public function authenticate(Request $request): RedirectResponse
     {
         $request->validate([
             'email'    => ['required', 'email'],
             'password' => ['required'],
         ]);
+
+        return $this->attempt($request);
+    }
+
+    /**
+     * Adviser sign-in: the adviser number as well as the email and password, and only
+     * an adviser account gets in this way.
+     */
+    public function authenticateAdviser(Request $request): RedirectResponse
+    {
+        $request->validate([
+            'employee_number' => ['required', 'string', 'max:30'],
+            'email'           => ['required', 'email'],
+            'password'        => ['required'],
+        ], [
+            'employee_number.required' => 'Enter your adviser number.',
+        ]);
+
+        return $this->attempt($request, adviser: true);
+    }
+
+    private function attempt(Request $request, bool $adviser = false): RedirectResponse
+    {
+        $keep = $adviser ? ['email', 'employee_number'] : ['email'];
 
         // The users table is asked first: Firebase's email enumeration protection
         // answers an unknown address and a wrong password with the same code, so only
@@ -44,7 +74,13 @@ class LoginController extends Controller
         } catch (QueryException $e) {
             report($e);
 
-            return back()->with('error', self::CONNECTION_FAILED)->onlyInput('email');
+            return back()->with('error', self::CONNECTION_FAILED)->onlyInput(...$keep);
+        }
+
+        if (! $user && $adviser) {
+            return back()->withErrors([
+                'email' => 'No adviser account uses this email yet. Tap Create an adviser account below.',
+            ])->onlyInput(...$keep);
         }
 
         if (! $user) {
@@ -55,27 +91,39 @@ class LoginController extends Controller
         }
 
         try {
+            // On the adviser page "Remember Me" waits until the account is known to be
+            // an adviser's, below.
             $firebaseData = $this->auth->loginWithFirebase(
                 $request->email,
                 $request->password,
-                $request->boolean('remember'),
+                $request->boolean('remember') && ! $adviser,
             );
         } catch (ConnectionException) {
-            return back()->with('error', self::CONNECTION_FAILED)->onlyInput('email');
+            return back()->with('error', self::CONNECTION_FAILED)->onlyInput(...$keep);
         } catch (\Throwable $e) {
             // Registered with Google and never set a password: "incorrect password" would
             // send them hunting for one that does not exist.
             if ($user->signsInWithGoogleOnly() && in_array(trim(strtok($e->getMessage(), ':')), ['INVALID_LOGIN_CREDENTIALS', 'INVALID_PASSWORD'], true)) {
                 return back()->withErrors([
                     'email' => 'This account signs in with Google. Tap Continue with Google below.',
-                ])->onlyInput('email');
+                ])->onlyInput(...$keep);
             }
 
-            return $this->firebaseRefusal($e)->onlyInput('email');
+            return $this->firebaseRefusal($e)->onlyInput(...$keep);
         }
 
         if ($user->is_suspended) {
-            return back()->withErrors(['email' => self::SUSPENDED])->onlyInput('email');
+            return back()->withErrors(['email' => self::SUSPENDED])->onlyInput(...$keep);
+        }
+
+        // Asked only after the password is right, so the adviser page tells nobody else
+        // which addresses are advisers'.
+        if ($adviser && $refusal = $this->notThisAdviser($user, (string) $request->employee_number)) {
+            return back()->withErrors($refusal)->onlyInput(...$keep);
+        }
+
+        if ($adviser && $request->boolean('remember') && ! empty($firebaseData['refreshToken'])) {
+            $this->auth->rememberRefreshToken($firebaseData['refreshToken']);
         }
 
         // A Google-only account whose Firebase side has since been given a password
@@ -86,6 +134,37 @@ class LoginController extends Controller
         }
 
         return $this->session->signIn($user, $firebaseData);
+    }
+
+    /**
+     * Why this account may not sign in on the adviser page, or null when it may: it must
+     * be an adviser account, and the adviser number must be its own. An adviser account
+     * made before adviser numbers were asked for takes the one typed, as the password has
+     * already shown it is theirs.
+     *
+     * @return array<string, string>|null
+     */
+    private function notThisAdviser(User $user, string $employeeNumber): ?array
+    {
+        if ($user->role !== 'adviser') {
+            return ['email' => 'This is not an adviser account. Students, officers and staff sign in on the Student tab.'];
+        }
+
+        $typed = strtoupper(trim($employeeNumber));
+
+        if ($user->employee_number === null) {
+            if (User::whereRaw('UPPER(employee_number) = ?', [$typed])->exists()) {
+                return ['employee_number' => 'This adviser number belongs to another account.'];
+            }
+
+            $user->update(['employee_number' => $typed]);
+
+            return null;
+        }
+
+        return strtoupper(trim($user->employee_number)) === $typed
+            ? null
+            : ['employee_number' => 'This adviser number does not match your account. Check it and try again.'];
     }
 
     /**

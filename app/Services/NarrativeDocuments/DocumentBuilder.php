@@ -502,7 +502,9 @@ class DocumentBuilder
         $lines = [];
 
         if ($key === 'communications') {
-            $mmo     = $this->officer('mmo');
+            // Since the post was split, the internal media mass officer signs; failing
+            // that the external one, then anyone still holding the old single post.
+            $mmo     = $this->officer('mmo_internal') ?? $this->officer('mmo_external') ?? $this->officer('mmo');
             $lines[] = [['text' => $mmo ?? '(Name)', 'bold' => true, 'underline' => $mmo !== null]];
             $lines[] = [['text' => $mmo ? 'Mass Media Officer' : '(Position)']];
         }

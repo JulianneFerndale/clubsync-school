@@ -27,6 +27,9 @@ use Illuminate\View\View;
  * gmail.com), so the person confirms their ClubSync password once and the Google
  * account is linked to it. An SCC Google account with no ClubSync account is taken to
  * registration with its address fixed.
+ *
+ * Started from the adviser pages (?as=adviser), it opens only an adviser account, and an
+ * SCC Google account with no ClubSync account is taken to adviser sign-up instead.
  */
 class GoogleController extends Controller
 {
@@ -42,6 +45,9 @@ class GoogleController extends Controller
     public const REGISTER_MINUTES = 30;
 
     private const LINK_EXPIRED = 'Your Google sign-in has expired. Please tap Continue with Google again.';
+
+    /** Started from the adviser sign-in or sign-up page: failures go back there. */
+    private bool $adviserFlow = false;
 
     public function __construct(
         private GoogleSignIn $google,
@@ -63,6 +69,7 @@ class GoogleController extends Controller
             'nonce'    => $start['nonce'],
             'verifier' => $start['verifier'],
             'remember' => $request->boolean('remember'),
+            'adviser'  => $request->query('as') === 'adviser',
         ]]);
 
         return redirect()->away($start['url']);
@@ -76,6 +83,8 @@ class GoogleController extends Controller
         if (! is_array($oauth) || ! hash_equals((string) $oauth['state'], (string) $request->query('state'))) {
             return $this->toLogin(self::LINK_EXPIRED);
         }
+
+        $this->adviserFlow = (bool) ($oauth['adviser'] ?? false);
 
         if ($request->filled('error') || ! $request->filled('code')) {
             // access_denied: they closed or cancelled Google's screen.
@@ -100,6 +109,13 @@ class GoogleController extends Controller
 
         // Not registered yet. The verified Google identity is carried into registration,
         // which fixes the email to it; no Firebase account is made here.
+        if (! $user && $this->adviserFlow) {
+            session(['register.adviser_google' => $google + ['expires' => now()->addMinutes(self::REGISTER_MINUTES)->timestamp]]);
+
+            return redirect()->route('register.adviser')->with('info',
+                'Your SCC Google account has no ClubSync account yet. Add your adviser number and pick your club to create your adviser account.');
+        }
+
         if (! $user) {
             if ($resumed = $this->resumeRegistration($google)) {
                 return $resumed;
@@ -113,6 +129,11 @@ class GoogleController extends Controller
 
         if ($user->is_suspended) {
             return $this->toLogin(self::SUSPENDED);
+        }
+
+        // The adviser pages open adviser accounts only.
+        if ($this->adviserFlow && $user->role !== 'adviser') {
+            return $this->toLogin('This is not an adviser account. Students, officers and staff sign in on the Student tab.');
         }
 
         try {
@@ -302,6 +323,6 @@ class GoogleController extends Controller
      */
     private function toLogin(string $message, string $kind = 'error'): RedirectResponse
     {
-        return redirect()->route('login')->with($kind, $message);
+        return redirect()->route($this->adviserFlow ? 'login.adviser' : 'login')->with($kind, $message);
     }
 }

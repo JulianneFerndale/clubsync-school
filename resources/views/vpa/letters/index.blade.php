@@ -7,7 +7,7 @@
 
 <div class="bg-[#07873e] px-5 pt-5 pb-6">
     <h1 class="text-white font-bold text-xl">Room Booking Letters</h1>
-    <p class="text-white/60 text-xs mt-1">Approve a letter to sign it and pass the activity to the club adviser, or return it with remarks.</p>
+    <p class="text-white/60 text-xs mt-1">Letters reach you once the club adviser has approved them. Approve one to sign it and confirm the activity, or return it with remarks.</p>
 </div>
 
 <div class="px-4 py-5 space-y-4 max-w-4xl">

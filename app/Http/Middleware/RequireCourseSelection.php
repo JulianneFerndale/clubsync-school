@@ -23,7 +23,7 @@ use Symfony\Component\HttpFoundation\Response;
 class RequireCourseSelection
 {
     /** Roles held by students. Everyone else has no course by nature. */
-    private const STUDENT_ROLES = ['member', 'president', 'treasurer', 'mmo'];
+    private const STUDENT_ROLES = User::STUDENT_ROLES;
 
     /** Routes that must stay reachable, or the redirect would loop. */
     private const ALWAYS_ALLOWED = ['onboarding.course', 'onboarding.course.store', 'logout'];

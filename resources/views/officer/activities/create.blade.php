@@ -28,7 +28,7 @@
     @endif
 
     <form method="POST" action="{{ route('officer.activities.store') }}" enctype="multipart/form-data" class="space-y-4" id="event-form"
-          data-loading="dialog" data-loading-message="Sending to the VPA"
+          data-loading="dialog" data-loading-message="Sending to your adviser"
           x-data="{ activityType: '{{ old('activity_type', 'internal_meeting') }}' }">
         @csrf
 
@@ -235,11 +235,11 @@
                 <p class="text-red-500 text-xs mt-1">{{ $message }}</p>
             @enderror
             <p class="text-xs text-[#F9A825] mt-1.5 font-medium">
-                Every activity, internal meetings included, needs a room booking letter. It goes to the Vice President for Administration first, then to your club adviser, and is confirmed once both approve.
+                Every activity, internal meetings included, needs a room booking letter. It goes to your club adviser first, then to the Vice President for Administration, and is confirmed once both approve.
             </p>
         </div>
 
-        {{-- Room booking letter to the VPA (every activity) --}}
+        {{-- Room booking letter to the VPA, through the adviser (every activity) --}}
         @include('officer.activities._booking-letter-field', ['letterBody' => old('letter_body', ''), 'aiDrafted' => old('letter_ai_drafted', '0')])
 
         {{-- Supporting document --}}
@@ -288,7 +288,7 @@
             </a>
             <button type="submit"
                     class="bg-[#07873e] text-[#F9A825] font-semibold text-sm rounded-xl py-3.5 hover:opacity-90 transition-opacity">
-                Sign &amp; Send to VPA
+                Sign &amp; Send to Adviser
             </button>
         </div>
 

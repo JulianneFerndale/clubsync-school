@@ -29,7 +29,7 @@
             @if($pending->isEmpty())
                 <div class="bg-white rounded-xl border border-gray-100 shadow-sm px-4 py-5 text-center">
                     <p class="text-sm text-gray-400">No activities pending review.</p>
-                    <p class="text-xs text-gray-400 mt-1">Activities reach you once the Vice President for Administration approves their room booking letter.</p>
+                    <p class="text-xs text-gray-400 mt-1">Activities reach you as soon as an officer sends them. You approve first, then the Vice President for Administration.</p>
                 </div>
             @else
                 <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden divide-y divide-gray-50">
@@ -54,10 +54,10 @@
             @endif
         </div>
 
-        {{-- Still with the VPA: not the adviser's to decide yet --}}
+        {{-- Approved by the adviser, with the VPA for final approval --}}
         @if($withVpa->isNotEmpty())
             <div>
-                <p class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2 px-1">With the VPA</p>
+                <p class="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2 px-1">Approved by You — With the VPA</p>
                 <div class="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden divide-y divide-gray-50">
                     @foreach($withVpa as $event)
                         <a href="{{ route('adviser.activities.show', $event) }}"
@@ -70,7 +70,7 @@
                         </a>
                     @endforeach
                 </div>
-                <p class="text-[11px] text-gray-400 mt-1.5 px-1">They reach Pending Review once the Vice President for Administration approves the room booking letter.</p>
+                <p class="text-[11px] text-gray-400 mt-1.5 px-1">They are confirmed once the Vice President for Administration approves the room booking letter.</p>
             </div>
         @endif
 

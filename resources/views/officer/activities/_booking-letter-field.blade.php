@@ -3,7 +3,7 @@
     activity, internal meetings included. The officer drafts the body (AI, or the template
     when the AI is unavailable), reads and edits it, and sends it signed with their name.
     Pressing Send with the letter still empty drafts it first and stops, so the officer
-    always reads what goes to the VPA (POLICY.md §AI & Automation).
+    always reads what goes to the adviser and the VPA (POLICY.md §AI & Automation).
 
     Expects $club, and: letterBody (string), aiDrafted ('0'|'1').
 --}}
@@ -18,7 +18,7 @@
     <div class="bg-[#07873e]/5 px-4 py-3 border-b border-[#07873e]/15">
         <p class="text-sm font-semibold text-[#07873e]">Room Booking Letter to the VPA <span class="text-red-500">*</span></p>
         <p class="text-xs text-gray-600 mt-0.5">
-            Sent with this activity to the Vice President for Administration, signed with your name. Draft it from the details above, then read it and change anything that is not right.
+            Sent with this activity to your club adviser and then to the Vice President for Administration, signed with your name. Draft it from the details above, then read it and change anything that is not right.
         </p>
     </div>
 
@@ -188,7 +188,7 @@
         e.stopImmediatePropagation();
 
         if (await draft()) {
-            show('Your letter is ready below. Read it, change anything that is not right, then press “Sign & Send to VPA” again.', 'ok');
+            show('Your letter is ready below. Read it, change anything that is not right, then press “Sign & Send to Adviser” again.', 'ok');
         }
         box.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, true);

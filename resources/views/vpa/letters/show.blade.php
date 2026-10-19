@@ -38,7 +38,7 @@
                     @endif
 
                     <p class="text-xs text-gray-500 leading-relaxed">
-                        Approving signs the letter under "Approved by" and passes the activity to the club adviser to confirm.
+                        Approving signs the letter under "Approved by" and confirms the activity: the club's members are told, and it goes onto their calendars.
                         @unless($hasSignature)
                             You have no signature on file, so the letter will say it was signed electronically.
                             <a href="{{ route('profile') }}#signature" class="text-[#07873e] font-semibold underline">Add a signature</a>.

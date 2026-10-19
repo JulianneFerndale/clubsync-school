@@ -29,8 +29,8 @@ class DashboardController extends Controller
             ->where('vpa_reviewed_at', '>=', now()->startOfMonth())
             ->count();
 
-        // Rooms the VPA has approved that are still to be used, whether or not the
-        // adviser has confirmed the activity yet.
+        // Rooms the VPA has approved that are still to be used (a letter the VPA approved
+        // under the old order, before its adviser, may still be waiting on them).
         $booked = ClubActivity::where('vpa_decision', 'approved')
             ->whereIn('approval_status', ['pending_approval', 'approved'])
             ->where('status', 'scheduled')

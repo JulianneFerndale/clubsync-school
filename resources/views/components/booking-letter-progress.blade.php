@@ -1,7 +1,8 @@
 {{--
     Where an activity's room booking letter stands (POLICY.md §Event Creation): signed and
-    sent by an officer, approved by the Vice President for Administration, confirmed by
-    the club adviser. Read from the activity, so every role sees the same three steps.
+    sent by an officer, approved by the club adviser, then approved by the Vice President
+    for Administration, which confirms it. Read from the activity, so every role sees the
+    same three steps.
     event: a ClubActivity with a booking letter
 --}}
 @props(['event'])
@@ -22,33 +23,34 @@
                 : null,
         ],
         [
+            'title' => 'Club adviser',
+            'state' => match (true) {
+                $adviserReturned                               => 'returned',
+                $event->approval_status === 'pending_approval' => 'current',
+                $adviserSigned !== null, $event->approval_status === 'approved' => 'done',
+                default                                        => 'waiting',
+            },
+            'note'  => match (true) {
+                $adviserReturned => 'Not approved ' . ($event->updated_at?->format('M j, Y g:i A') ?? ''),
+                $event->approval_status === 'pending_approval' => 'Waiting for the adviser to approve',
+                $adviserSigned !== null => 'Approved and signed ' . \Carbon\Carbon::parse($adviserSigned['signed_at'])->format('M j, Y g:i A'),
+                $event->approval_status === 'approved' => 'Approved',
+                default => null,
+            },
+        ],
+        [
             'title' => 'Vice President for Administration',
             'state' => match (true) {
-                $vpaReturned                      => 'returned',
+                $vpaReturned                        => 'returned',
                 $event->vpa_decision === 'approved' => 'done',
-                $event->isAwaitingVpa()           => 'current',
-                default                           => 'waiting',
+                $event->isAwaitingVpa()             => 'current',
+                default                             => 'waiting',
             },
             'note'  => match (true) {
                 $vpaReturned => 'Returned ' . $event->vpa_reviewed_at?->format('M j, Y g:i A'),
                 $event->vpa_decision === 'approved' => 'Approved and signed ' . \Carbon\Carbon::parse($vpaSigned['signed_at'] ?? $event->vpa_reviewed_at)->format('M j, Y g:i A'),
                 $event->isAwaitingVpa() => 'Reviewing the letter',
-                default => null,
-            },
-        ],
-        [
-            'title' => 'Club adviser',
-            'state' => match (true) {
-                $adviserReturned                            => 'returned',
-                $event->approval_status === 'approved'      => 'done',
-                $event->approval_status === 'pending_approval' => 'current',
-                default                                     => 'waiting',
-            },
-            'note'  => match (true) {
-                $adviserReturned => 'Not approved ' . ($event->updated_at?->format('M j, Y g:i A') ?? ''),
-                $event->approval_status === 'approved' => 'Confirmed' . ($adviserSigned ? ' and signed ' . \Carbon\Carbon::parse($adviserSigned['signed_at'])->format('M j, Y g:i A') : ''),
-                $event->approval_status === 'pending_approval' => 'Waiting for the adviser to confirm',
-                default => 'After the VPA approves',
+                default => 'After the adviser approves',
             },
         ],
     ];

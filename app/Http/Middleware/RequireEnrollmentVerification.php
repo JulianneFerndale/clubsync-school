@@ -19,7 +19,7 @@ use Symfony\Component\HttpFoundation\Response;
 class RequireEnrollmentVerification
 {
     /** Roles held by students. Everyone else has nothing to verify. */
-    private const STUDENT_ROLES = ['member', 'president', 'treasurer', 'mmo'];
+    private const STUDENT_ROLES = User::STUDENT_ROLES;
 
     /** Routes that must stay reachable, or the redirect would loop. */
     private const ALWAYS_ALLOWED = [

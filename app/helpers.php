@@ -32,12 +32,14 @@ if (! function_exists('role_layout')) {
     /** The app layout a page shared by every role (profile, chat) should extend. */
     function role_layout(?string $role): string
     {
+        if ($role === 'officer' || \App\Models\User::isOfficerRole($role)) {
+            return 'layouts.app-officer';
+        }
+
         return match ($role) {
             'dsa'                            => 'layouts.app-dsa',
             'vpa'                            => 'layouts.app-vpa',
             'adviser'                        => 'layouts.app-adviser',
-            'officer', 'president',
-            'treasurer', 'mmo'               => 'layouts.app-officer',
             default                          => 'layouts.app-member',
         };
     }

@@ -4,9 +4,9 @@ namespace App\Http\Controllers\Officer;
 
 use App\Http\Controllers\Controller;
 use App\Jobs\GenerateClubNarrativeJob;
+use App\Jobs\NotifyAdviserOfActivitySubmission;
 use App\Jobs\NotifyMemberOfAttendance;
 use App\Jobs\NotifyMembersOfActivity;
-use App\Jobs\NotifyVpaOfBookingLetter;
 use App\Jobs\SyncToGoogleCalendars;
 use App\Models\ActivityChangeLog;
 use App\Models\AuditLog;
@@ -319,8 +319,8 @@ class ActivityController extends Controller
             }
         }
 
-        // Every new activity, internal meetings included, is sent to the VPA with a room
-        // booking letter, then to the club adviser (POLICY.md §Event Creation).
+        // Every new activity, internal meetings included, is sent with a room booking
+        // letter to the club adviser, then to the VPA (POLICY.md §Event Creation).
         // The officer read this letter on the form (the AI's draft or their own words)
         // before pressing Send; with none written, it is the template, which no AI wrote.
         $letterBody = trim((string) ($validated['letter_body'] ?? ''));
@@ -348,7 +348,7 @@ class ActivityController extends Controller
             'expected_participants' => $validated['expected_participants'],
             'activity_type'         => $validated['activity_type'],
             'target_year_levels'    => $this->normalizeYearLevels($request),
-            'approval_status'       => 'pending_vpa',
+            'approval_status'       => 'pending_approval',
             'approval_letter_path'  => $approvalLetterPath,
             'status'                => 'scheduled',
             'created_by'            => auth_user_id(),
@@ -362,8 +362,8 @@ class ActivityController extends Controller
 
         AuditLog::record('activity.letter.sent', $event, ['club_id' => $club->id, 'venue' => $event->venue, 'ai_drafted' => $event->letter_ai_drafted]);
 
-        // Members hear of it, and it reaches their calendars, once the adviser approves.
-        NotifyVpaOfBookingLetter::dispatch($event->id);
+        // Members hear of it, and it reaches their calendars, once the VPA approves.
+        NotifyAdviserOfActivitySubmission::dispatch($event->id);
 
         // Mirror to Firebase RTDB (eventual consistency — do not roll back on failure)
         // TODO: remove SQLite guard / revisit Firebase node naming before Supabase migration
@@ -381,7 +381,7 @@ class ActivityController extends Controller
         }
 
         return redirect()->route('officer.activities.show', $event)
-            ->with('success', 'Activity saved. Your room booking letter was signed and sent to the Vice President for Administration.');
+            ->with('success', 'Activity saved. Your room booking letter was signed and sent to your club adviser, then it goes to the Vice President for Administration.');
     }
 
     /**
@@ -688,8 +688,8 @@ class ActivityController extends Controller
         $changed      = $edited || $letterEdited || $request->hasFile('approval_letter')
             || $validated['target_year_levels'] != ($event->target_year_levels ?: null);
 
-        // POLICY.md §Event Creation: a changed activity goes back to the VPA with a
-        // re-signed letter, whatever stage it had reached — approved, with the adviser, or
+        // POLICY.md §Event Creation: a changed activity goes back to the adviser with a
+        // re-signed letter, whatever stage it had reached — approved, with the VPA, or
         // returned (which is how a returned letter is sent again). So does an internal
         // meeting scheduled before every activity needed approval. Saved unchanged, it
         // keeps the approvals it has.
@@ -719,13 +719,13 @@ class ActivityController extends Controller
             $validated['approval_letter_path'] = $request->file('approval_letter')->store('approval-letters', 'local');
         }
 
-        $wasWithVpa = $event->approval_status === 'pending_vpa';
+        $wasWithAdviser = $event->approval_status === 'pending_approval';
 
         if ($resubmit) {
             $officer = User::find(auth_user_id());
 
             $validated += [
-                'approval_status'   => 'pending_vpa',
+                'approval_status'   => 'pending_approval',
                 'review_remarks'    => null,
                 'approved_by'       => null,
                 'approved_at'       => null,
@@ -734,7 +734,7 @@ class ActivityController extends Controller
                 'vpa_reviewed_at'   => null,
                 'letter_body'       => $letterBody,
                 'letter_ai_drafted' => $letterEdited ? $request->boolean('letter_ai_drafted') : (bool) $event->letter_ai_drafted,
-                // Signed again by whoever sends it this time; the VPA and adviser sign afresh.
+                // Signed again by whoever sends it this time; the adviser and the VPA sign afresh.
                 'letter_signatures' => $officer ? ['officer' => $this->letters->sign($officer, BookingLetter::officerPosition($club, $officer))] : null,
             ];
         }
@@ -773,9 +773,9 @@ class ActivityController extends Controller
         if ($resubmit) {
             AuditLog::record('activity.letter.sent', $event, ['club_id' => $club->id, 'venue' => $event->venue, 'resent' => true]);
 
-            // Already in the VPA's queue: they see the new letter there, with no second notice.
-            if (! $wasWithVpa) {
-                NotifyVpaOfBookingLetter::dispatch($event->id);
+            // Already in the adviser's queue: they see the new letter there, with no second notice.
+            if (! $wasWithAdviser) {
+                NotifyAdviserOfActivitySubmission::dispatch($event->id);
             }
         }
 
@@ -795,7 +795,7 @@ class ActivityController extends Controller
 
         return redirect()->route('officer.activities.show', $event)
             ->with('success', 'Activity updated.' . ($resubmit
-                ? ' The room booking letter was signed again and sent to the Vice President for Administration, so it needs their approval and the adviser\'s again.'
+                ? ' The room booking letter was signed again and sent to your club adviser, so it needs their approval and the Vice President for Administration\'s again.'
                 : ''));
     }
 

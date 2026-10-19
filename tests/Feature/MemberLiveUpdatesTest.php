@@ -134,10 +134,11 @@ it('pushes a new activity to the members once it is approved, and lists it on th
         'expected_participants' => 20, 'activity_type' => 'internal_meeting', 'confirmed' => 1,
     ])->assertRedirect();
 
-    // Every activity waits for the VPA, then the adviser; only then do members hear of it.
+    // Every activity waits for the adviser, then the VPA; only then do members hear of it.
     $activity = ClubActivity::where('title', 'Planning Huddle')->firstOrFail();
-    $this->withSession(mlSession($vpa))->post(route('vpa.letters.approve', $activity));
     $this->withSession(mlSession($adviser))->post(route('adviser.activities.approve', $activity));
+    $this->flushSession();
+    $this->withSession(mlSession($vpa))->post(route('vpa.letters.approve', $activity));
     $this->flushSession();
 
     // The push carries the club, which is what refreshes an open page (app.js).

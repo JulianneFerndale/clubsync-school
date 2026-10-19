@@ -15,7 +15,11 @@
 
     @if(! $club)
         <div class="bg-yellow-50 border border-yellow-200 rounded-xl px-4 py-4 text-yellow-800 text-sm">
-            You have not been assigned to a club yet. Please contact the DSA office.
+            @if($requestedClub)
+                You asked to advise <span class="font-semibold">{{ $requestedClub->name }}</span>. An administrator will confirm it, and your club's pages open once they do.
+            @else
+                You have not been assigned to a club yet. Please contact the DSA office.
+            @endif
         </div>
     @else
 

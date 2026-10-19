@@ -66,8 +66,8 @@ class ClubActivity extends Model
     public const CONFIRMED_APPROVAL_STATUSES = ['no_approval_needed', 'approved'];
 
     /**
-     * Still waiting on someone's approval: the room booking letter is with the VPA, or
-     * the VPA has approved it and it is with the club adviser.
+     * Still waiting on someone's approval: the room booking letter is with the club
+     * adviser, or the adviser has approved it and it is with the VPA.
      */
     public const AWAITING_APPROVAL_STATUSES = ['pending_vpa', 'pending_approval'];
 
@@ -110,7 +110,7 @@ class ClubActivity extends Model
     }
 
     /**
-     * Confirmed and still going ahead: an activity the VPA and the adviser approved (or,
+     * Confirmed and still going ahead: an activity the adviser and the VPA approved (or,
      * from before that, an internal meeting scheduled outright) that has not been
      * cancelled. Only these reach members.
      */
@@ -175,6 +175,16 @@ class ClubActivity extends Model
     public function isAwaitingVpa(): bool
     {
         return $this->approval_status === 'pending_vpa';
+    }
+
+    /**
+     * Letters that have reached the VPA: with them now (the adviser has approved), or
+     * decided by them before. One still with the adviser is not the VPA's yet.
+     */
+    public function scopeReachedVpa(Builder $query): Builder
+    {
+        return $query->whereNotNull('letter_body')
+            ->where(fn (Builder $q) => $q->where('approval_status', 'pending_vpa')->orWhereNotNull('vpa_decision'));
     }
 
     /** The VPA, not the adviser, turned the letter down. */

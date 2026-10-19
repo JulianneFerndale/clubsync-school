@@ -73,7 +73,7 @@
         <p class="text-sm text-gray-700 leading-relaxed">{{ $event->purpose }}</p>
     </div>
 
-    {{-- Approval: the VPA's, then the adviser's (every activity but a meeting scheduled before that rule) --}}
+    {{-- Approval: the adviser's, then the VPA's (every activity but a meeting scheduled before that rule) --}}
     @if($event->hasBookingLetter() || $event->approval_status !== 'no_approval_needed')
     <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 space-y-3">
         <div class="flex items-center justify-between">

@@ -7,6 +7,7 @@ use App\Models\Announcement;
 use App\Models\Club;
 use App\Models\ClubActivity;
 use App\Models\ClubMember;
+use App\Models\User;
 use App\Services\OfficerTurnover;
 use Illuminate\View\View;
 
@@ -25,6 +26,9 @@ class DashboardController extends Controller
         $recentAnnouncements  = collect();
         $memberCount          = 0;
 
+        // An adviser with no club yet may be waiting on the one they asked for at sign-up.
+        $requestedClub = $club ? null : User::find(auth_user_id())?->requestedClub;
+
         if ($club) {
             $upcomingEvents      = ClubActivity::where('club_id', $club->id)->upcoming()->take(5)->get();
             $pendingCount        = ClubActivity::where('club_id', $club->id)
@@ -40,6 +44,7 @@ class DashboardController extends Controller
             'turnoverPending',
             'academicYear',
             'club',
+            'requestedClub',
             'upcomingEvents',
             'pendingCount',
             'recentAnnouncements',

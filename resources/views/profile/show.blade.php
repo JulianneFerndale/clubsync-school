@@ -112,9 +112,9 @@
             @if($user->role === 'vpa')
                 under "Approved by" when you approve one.
             @elseif($user->role === 'adviser')
-                under "Noted by" when you confirm an activity.
+                under "Noted by" when you approve an activity.
             @else
-                above your name when you send one to the VPA.
+                above your name when you send one to your adviser.
             @endif
             Without one, a letter says it was signed electronically. Only you see it here; others see it only on letters you have signed.
         </p>

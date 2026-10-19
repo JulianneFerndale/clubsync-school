@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Attributes\Hidden;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
@@ -17,13 +19,58 @@ use Illuminate\Notifications\Notifiable;
     'pending_club_assignment', 'enrollment_status',
     'firebase_uid', 'role', 'college_id', 'profile_photo_url',
     'last_password_changed', 'is_suspended', 'chat_privacy_acknowledged_at',
-    'signature_path',
+    'signature_path', 'requested_club_id',
 ])]
 #[Hidden(['password', 'remember_token'])]
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
     use HasFactory, Notifiable;
+
+    /**
+     * The club officer posts an administrator appoints, in the order a club lists them.
+     * Each is both a users.role value and a club_officers.position value: the role opens
+     * the officer pages, the position says which club they hold it in.
+     */
+    public const POSITION_LABELS = [
+        'president'      => 'President',
+        'vice_president' => 'Vice President',
+        'secretary'      => 'Secretary',
+        'treasurer'      => 'Treasurer',
+        'auditor'        => 'Auditor',
+        'mmo_internal'   => 'Media Mass Officer (Internal)',
+        'mmo_external'   => 'Media Mass Officer (External)',
+    ];
+
+    /** The single media mass officer post from before it was split. Kept by those who hold it; no longer appointed. */
+    public const LEGACY_POSITION_LABELS = ['mmo' => 'Media Mass Officer'];
+
+    /** Every role that opens the officer pages (the `officer` route alias). */
+    public const OFFICER_ROLES = [
+        'president', 'vice_president', 'secretary', 'treasurer', 'auditor', 'mmo_internal', 'mmo_external', 'mmo',
+    ];
+
+    /** Roles held by students: members and club officers. Advisers are employees and never hold one. */
+    public const STUDENT_ROLES = [
+        'member', 'president', 'vice_president', 'secretary', 'treasurer', 'auditor', 'mmo_internal', 'mmo_external', 'mmo',
+    ];
+
+    public static function isOfficerRole(?string $role): bool
+    {
+        return in_array($role, self::OFFICER_ROLES, true);
+    }
+
+    /** "Vice President", "Media Mass Officer (Internal)": how a position or role reads. */
+    public static function roleLabel(?string $role): string
+    {
+        return self::POSITION_LABELS[$role]
+            ?? self::LEGACY_POSITION_LABELS[$role]
+            ?? match ($role) {
+                'dsa'   => 'DSA',
+                'vpa'   => 'VPA',
+                default => ucfirst((string) $role),
+            };
+    }
 
     protected function casts(): array
     {
@@ -55,8 +102,7 @@ class User extends Authenticatable
             'dsa'                           => 'Student Affairs Office',
             'vpa'                           => 'Office of the VP for Administration',
             'adviser'                       => 'Club Adviser',
-            'president', 'treasurer', 'mmo' => 'Club Officer',
-            default                         => 'Student',
+            default                         => self::isOfficerRole($this->role) ? 'Club Officer' : 'Student',
         };
     }
 
@@ -66,7 +112,7 @@ class User extends Authenticatable
      */
     public function signsLetters(): bool
     {
-        return in_array($this->role, ['president', 'treasurer', 'mmo', 'adviser', 'vpa'], true);
+        return self::isOfficerRole($this->role) || in_array($this->role, ['adviser', 'vpa'], true);
     }
 
     /**
@@ -113,6 +159,43 @@ class User extends Authenticatable
     public function college(): BelongsTo
     {
         return $this->belongsTo(College::class);
+    }
+
+    /**
+     * A student's account: registered with an EDP number or a course. Such an account is
+     * never made an adviser (POLICY.md §Role-Based Access).
+     */
+    public function isStudentAccount(): bool
+    {
+        return $this->edp_number !== null || $this->course_id !== null;
+    }
+
+    /** An employee's account: an adviser, or anyone registered with an adviser (employee) number. Never a member or officer. */
+    public function isEmployeeAccount(): bool
+    {
+        return $this->role === 'adviser' || $this->employee_number !== null;
+    }
+
+    /** The club this adviser advises (clubs.adviser_id). One club per adviser. */
+    public function advisedClub(): HasOne
+    {
+        return $this->hasOne(Club::class, 'adviser_id');
+    }
+
+    /** The club an adviser asked to advise when they registered, until an administrator confirms or declines it. */
+    public function requestedClub(): BelongsTo
+    {
+        return $this->belongsTo(Club::class, 'requested_club_id');
+    }
+
+    public function clubMemberships(): HasMany
+    {
+        return $this->hasMany(ClubMember::class);
+    }
+
+    public function officerPosts(): HasMany
+    {
+        return $this->hasMany(ClubOfficer::class);
     }
 
     public function getNameAttribute(): string

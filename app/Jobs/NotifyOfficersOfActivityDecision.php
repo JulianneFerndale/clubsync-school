@@ -13,12 +13,14 @@ use Illuminate\Queue\SerializesModels;
 
 /**
  * Tell a club's officers and adviser what became of an activity sent for approval: the
- * VPA's decision on its room booking letter, then the adviser's (POLICY.md §Event
- * Creation). A VPA approval is news, not the end — it is now with the adviser.
+ * adviser's decision on its room booking letter, then the VPA's (POLICY.md §Event
+ * Creation). An adviser's approval is news, not the end — it is now with the VPA.
  */
 class NotifyOfficersOfActivityDecision implements ShouldQueue
 {
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
+
+    public const ADVISER_APPROVED = 'adviser_approved';
 
     public const VPA_APPROVED = 'vpa_approved';
     public const VPA_REJECTED = 'vpa_rejected';
@@ -37,16 +39,21 @@ class NotifyOfficersOfActivityDecision implements ShouldQueue
 
         $recipientIds = ClubOfficer::where('club_id', $club->id)->pluck('user_id');
 
-        if ($club->adviser_id) {
+        // The adviser hears of every decision but their own approval, which they just gave.
+        if ($club->adviser_id && $this->decision !== self::ADVISER_APPROVED) {
             $recipientIds->push($club->adviser_id);
         }
 
         $remarks = $activity->review_remarks ? ' Remarks: ' . $activity->review_remarks : '';
 
         [$title, $body] = match ($this->decision) {
+            self::ADVISER_APPROVED => [
+                'Letter approved by the adviser',
+                "The club adviser approved and signed the room booking letter for \"{$activity->title}\". It is now with the Vice President for Administration for final approval.",
+            ],
             self::VPA_APPROVED => [
-                'Letter approved by the VPA',
-                "The Vice President for Administration approved the room booking letter for \"{$activity->title}\". It is now with the club adviser for confirmation.",
+                'Activity approved',
+                "The Vice President for Administration approved the room booking letter for \"{$activity->title}\". The activity is confirmed and members have been told.",
             ],
             self::VPA_REJECTED => [
                 'Letter returned by the VPA',

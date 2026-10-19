@@ -32,11 +32,7 @@ class BookingLetter
 
     public const CLOSING = 'We look forward to your approval. Thank you.';
 
-    public const POSITION_LABELS = [
-        'president' => 'President',
-        'treasurer' => 'Treasurer',
-        'mmo'       => 'MMO',
-    ];
+    public const POSITION_LABELS = User::POSITION_LABELS + ['mmo' => 'MMO'];
 
     public function __construct(private SignatureStorage $signatures) {}
 

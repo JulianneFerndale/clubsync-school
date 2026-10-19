@@ -27,6 +27,9 @@ const LO_PUBLIC_ROUTES = [
     'GET reset-password', 'POST reset-password',
     'GET auth/google', 'GET auth/google/callback', 'GET auth/google/link', 'POST auth/google/link',
     'POST register/google/cancel',
+    // Advisers sign in and sign up on their own pages.
+    'GET login/adviser', 'POST login/adviser',
+    'GET register/adviser', 'POST register/adviser', 'POST register/adviser/google/cancel',
     'GET storage/{path}', 'PUT storage/{path}',
 ];
 

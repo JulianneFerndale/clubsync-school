@@ -75,6 +75,13 @@
                 Login
             </a>
         </div>
+
+        <p class="text-center text-sm text-gray-500 mt-6">
+            Club adviser?
+            <a href="{{ route('login.adviser') }}" class="text-green-700 font-semibold hover:text-green-900 transition-colors">Adviser login</a>
+            ·
+            <a href="{{ route('register.adviser') }}" class="text-green-700 font-semibold hover:text-green-900 transition-colors">Sign up</a>
+        </p>
     </div>
 </div>
 

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Auth\AdviserRegisterController;
 use App\Http\Controllers\Auth\ForgotPasswordController;
 use App\Http\Controllers\Auth\GoogleController;
 use App\Http\Controllers\Auth\LoginController;
@@ -82,6 +83,14 @@ Route::middleware('guest.firebase')->group(function () {
     // Leave the Google registration form for the email-and-password one. A POST, so a
     // Turbo hover prefetch can never drop the Google account someone just chose.
     Route::post('/register/google/cancel', [RegisterController::class, 'cancelGoogle'])->name('register.google.cancel');
+
+    // Advisers sign in and sign up on their own pages: they are employees, not students,
+    // so they give an adviser number and are not asked for a course or proof of enrollment.
+    Route::get('/login/adviser', [LoginController::class, 'showAdviser'])->name('login.adviser');
+    Route::post('/login/adviser', [LoginController::class, 'authenticateAdviser'])->middleware('throttle:5,1,adviser-login');
+    Route::get('/register/adviser', [AdviserRegisterController::class, 'show'])->name('register.adviser');
+    Route::post('/register/adviser', [AdviserRegisterController::class, 'store'])->middleware('throttle:5,1,adviser-register');
+    Route::post('/register/adviser/google/cancel', [AdviserRegisterController::class, 'cancelGoogle'])->name('register.adviser.google.cancel');
 });
 
 Route::post('/logout', [LoginController::class, 'logout'])->name('logout')->middleware('firebase.token');
@@ -173,9 +182,12 @@ Route::middleware(['firebase.token', 'role:adviser,officer,dsa,admin'])->prefix(
 Route::middleware(['firebase.token', 'admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/dashboard', [\App\Http\Controllers\Admin\DashboardController::class, 'index'])->name('dashboard');
 
-    // User & role management
+    // User & role management: an officer position is given in a named club, and an
+    // adviser is linked to the one club they advise (one adviser per club).
     Route::get('/users',              [\App\Http\Controllers\Admin\UserController::class, 'index'])->name('users.index');
     Route::patch('/users/{user}/role', [\App\Http\Controllers\Admin\UserController::class, 'updateRole'])->name('users.role.update');
+    Route::patch('/users/{user}/club', [\App\Http\Controllers\Admin\UserController::class, 'assignClub'])->name('users.club.update');
+    Route::delete('/users/{user}/club-request', [\App\Http\Controllers\Admin\UserController::class, 'declineClubRequest'])->name('users.club-request.destroy');
 
     // Proof-of-enrollment cases the automatic check could not decide (shared with the DSA)
     Route::get('/verifications',                         [\App\Http\Controllers\EnrollmentVerificationController::class, 'index'])->name('verifications.index');
@@ -354,7 +366,7 @@ Route::middleware(['firebase.token', 'role:vpa'])->prefix('vpa')->name('vpa.')->
     Route::get('/letters/{event}/pdf',      [\App\Http\Controllers\VPA\LetterController::class, 'pdf'])->name('letters.pdf');
 });
 
-// ─── Officer (president / treasurer / mmo) ───────────────────────────────────
+// ─── Officer (every officer position: User::OFFICER_ROLES) ───────────────────
 Route::middleware(['firebase.token', 'role:officer'])->prefix('officer')->name('officer.')->group(function () {
     Route::get('/dashboard', [\App\Http\Controllers\Officer\DashboardController::class, 'index'])->name('dashboard');
 

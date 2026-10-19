@@ -123,7 +123,7 @@
                 <x-avatar size="sm" />
                 <div class="min-w-0">
                     <p class="text-white text-sm font-medium truncate">{{ auth()->user()->first_name ?? 'User' }} {{ auth()->user()->last_name ?? '' }}</p>
-                    <p class="text-white/50 text-xs capitalize truncate">{{ auth_role() ?? 'officer' }}</p>
+                    <p class="text-white/50 text-xs capitalize truncate">{{ \App\Models\User::roleLabel(auth_role()) }}</p>
                 </div>
             </a>
             <form method="POST" action="{{ route('logout') }}" data-turbo="false">

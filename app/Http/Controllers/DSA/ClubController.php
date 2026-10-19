@@ -14,6 +14,7 @@ use App\Support\PublicUpload;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 
 class ClubController extends Controller
@@ -57,7 +58,8 @@ class ClubController extends Controller
     public function create(): View
     {
         $colleges  = College::orderBy('name')->get();
-        $advisers  = User::where('role', 'adviser')->orderBy('first_name')->get();
+        // Only advisers free to take a club: an adviser advises one.
+        $advisers  = User::where('role', 'adviser')->whereDoesntHave('advisedClub')->orderBy('first_name')->get();
 
         return view('dsa.clubs.create', compact('colleges', 'advisers'));
     }
@@ -69,7 +71,7 @@ class ClubController extends Controller
             'acronym'     => ['required', 'string', 'max:50'],
             'type'        => ['required', 'in:academic,non_academic'],
             'college_id'  => ['nullable', 'exists:colleges,id'],
-            'adviser_id'  => ['nullable', 'exists:users,id'],
+            'adviser_id'  => $this->adviserRules(null),
             'description' => ['nullable', 'string'],
             'facebook_url' => ['nullable', 'string', 'max:255', new FacebookPageUrl],
             'logo'        => ['nullable', 'image', 'max:2048'],
@@ -96,6 +98,8 @@ class ClubController extends Controller
         ]);
 
         AuditLog::record('club.created', $club, ['name' => $club->name]);
+
+        $this->settleClubRequest($club->adviser_id);
 
         return redirect()->route('dsa.clubs.index')
             ->with('success', 'Club created successfully.');
@@ -131,7 +135,11 @@ class ClubController extends Controller
     public function edit(Club $club): View
     {
         $colleges = College::orderBy('name')->get();
-        $advisers = User::where('role', 'adviser')->orderBy('first_name')->get();
+        // This club's adviser, and advisers advising no club yet: an adviser advises one.
+        $advisers = User::where('role', 'adviser')
+            ->where(fn ($q) => $q->whereDoesntHave('advisedClub')->orWhere('id', $club->adviser_id))
+            ->orderBy('first_name')
+            ->get();
 
         return view('dsa.clubs.edit', compact('club', 'colleges', 'advisers'));
     }
@@ -143,7 +151,7 @@ class ClubController extends Controller
             'acronym'     => ['required', 'string', 'max:50'],
             'type'        => ['required', 'in:academic,non_academic'],
             'college_id'  => ['nullable', 'exists:colleges,id'],
-            'adviser_id'  => ['nullable', 'exists:users,id'],
+            'adviser_id'  => $this->adviserRules($club),
             'description' => ['nullable', 'string'],
             'facebook_url' => ['nullable', 'string', 'max:255', new FacebookPageUrl],
             'logo'        => ['nullable', 'image', 'max:2048'],
@@ -191,10 +199,39 @@ class ClubController extends Controller
             foreach (array_filter([$previousAdviserId, $club->adviser_id]) as $adviserId) {
                 SyncClubMemberGoogleCalendar::dispatch((int) $adviserId, $club->id);
             }
+
+            $this->settleClubRequest($club->adviser_id);
         }
 
         return redirect()->route('dsa.clubs.show', $club)
             ->with('success', 'Club updated successfully.');
+    }
+
+    /**
+     * A club has one adviser, and an adviser advises one club (POLICY.md §Club Registry):
+     * the adviser picked must be an adviser account that advises no other club.
+     */
+    private function adviserRules(?Club $club): array
+    {
+        return [
+            'nullable',
+            Rule::exists('users', 'id')->where('role', 'adviser'),
+            function (string $attribute, mixed $value, \Closure $fail) use ($club) {
+                $other = Club::where('adviser_id', $value)->when($club, fn ($q) => $q->whereKeyNot($club->id))->first();
+
+                if ($other) {
+                    $fail("That adviser already advises {$other->name}. An adviser advises one club.");
+                }
+            },
+        ];
+    }
+
+    /** An adviser given a club here no longer waits on the club they asked for at sign-up. */
+    private function settleClubRequest(?int $adviserId): void
+    {
+        if ($adviserId) {
+            User::whereKey($adviserId)->update(['requested_club_id' => null]);
+        }
     }
 
     /**

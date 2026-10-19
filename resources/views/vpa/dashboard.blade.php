@@ -7,7 +7,7 @@
 
 <div class="bg-[#07873e] px-5 py-4">
     <h1 class="text-white font-bold text-xl">Vice President for Administration</h1>
-    <p class="text-white/60 text-xs mt-0.5">Room booking letters from the clubs, before they go to the club advisers</p>
+    <p class="text-white/60 text-xs mt-0.5">Room booking letters from the clubs, approved by their advisers</p>
 </div>
 
 <div class="px-4 py-5 space-y-5 max-w-4xl">
