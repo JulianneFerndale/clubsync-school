@@ -49,7 +49,7 @@
     <div>
         <h2 class="text-base font-bold text-gray-800 mb-3">My Non-Academic Clubs</h2>
         @if($nonAcademicClubs->isEmpty())
-            <p class="text-sm text-gray-400 text-center py-4">You have not joined any non-academic clubs yet.</p>
+            <x-empty-clubs :href="route('officer.clubs.index')" />
         @else
             <div class="grid grid-cols-3 gap-2.5">
                 @foreach($nonAcademicClubs as $nonAcademicClub)
